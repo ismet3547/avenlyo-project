@@ -1,10 +1,18 @@
 import path from "node:path";
 import mammoth from "mammoth";
-import { extractText, getDocumentProxy } from "unpdf";
+import { createWorker, type Worker } from "tesseract.js";
+import {
+  extractText,
+  getDocumentProxy,
+  renderPageAsImage,
+} from "unpdf";
 import type { ExtractedPage } from "@/lib/rag/chunk";
 
 const PDF_PAGE_LIMIT = 300;
+const OCR_PAGE_LIMIT = 100;
 const PDF_TIMEOUT_MS = 45_000;
+const NATIVE_TEXT_THRESHOLD = 60;
+const OCR_RENDER_SCALE = 2;
 
 function extensionOf(fileName: string) {
   return path.extname(fileName).toLocaleLowerCase("tr");
@@ -30,11 +38,46 @@ export function safeKnowledgeFileName(fileName: string) {
   return `${base}${extension}`;
 }
 
+function ocrLanguages() {
+  const configured = process.env.AVENLYO_OCR_LANGS
+    ?.split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return configured?.length ? configured : ["tur", "eng"];
+}
+
+async function recognizePdfPage(
+  pdf: Awaited<ReturnType<typeof getDocumentProxy>>,
+  pageNumber: number,
+  worker: Worker,
+) {
+  const image = await renderPageAsImage(pdf, pageNumber, {
+    canvasImport: () => import("@napi-rs/canvas"),
+    scale: OCR_RENDER_SCALE,
+  });
+
+  const bytes =
+    typeof image === "string"
+      ? image
+      : Buffer.from(image);
+
+  const result = await worker.recognize(bytes);
+  return {
+    text: result.data.text.trim(),
+    confidence:
+      typeof result.data.confidence === "number"
+        ? Math.round(result.data.confidence * 10) / 10
+        : null,
+  };
+}
+
 async function extractPdf(buffer: Buffer): Promise<{
   pages: ExtractedPage[];
   pageCount: number;
 }> {
   const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  let worker: Worker | null = null;
 
   try {
     if (pdf.numPages > PDF_PAGE_LIMIT) {
@@ -60,14 +103,53 @@ async function extractPdf(buffer: Buffer): Promise<{
         ? [rawText]
         : [];
 
+    const needsOcr = pageTexts
+      .map((text, index) => ({
+        index,
+        text: String(text || "").trim(),
+      }))
+      .filter((page) => page.text.length < NATIVE_TEXT_THRESHOLD);
+
+    if (needsOcr.length > OCR_PAGE_LIMIT) {
+      throw new Error(
+        `Bu PDF'de ${needsOcr.length} sayfa OCR gerektiriyor. İlk sürümde OCR sınırı ${OCR_PAGE_LIMIT} sayfadır.`,
+      );
+    }
+
+    if (needsOcr.length) {
+      worker = await createWorker(ocrLanguages());
+    }
+
+    const pages: ExtractedPage[] = [];
+
+    for (let index = 0; index < pdf.numPages; index += 1) {
+      const nativeText = String(pageTexts[index] || "").trim();
+
+      if (nativeText.length >= NATIVE_TEXT_THRESHOLD || !worker) {
+        pages.push({
+          text: nativeText,
+          pageNumber: index + 1,
+          extractionMethod: "native",
+          ocrConfidence: null,
+        });
+        continue;
+      }
+
+      const ocr = await recognizePdfPage(pdf, index + 1, worker);
+      pages.push({
+        text: ocr.text || nativeText,
+        pageNumber: index + 1,
+        extractionMethod: ocr.text ? "ocr" : "native",
+        ocrConfidence: ocr.text ? ocr.confidence : null,
+      });
+    }
+
     return {
       pageCount: result.totalPages || pdf.numPages,
-      pages: pageTexts.map((text, index) => ({
-        text: String(text || ""),
-        pageNumber: index + 1,
-      })),
+      pages,
     };
   } finally {
+    if (worker) await worker.terminate();
     const destroy = (pdf as unknown as { destroy?: () => void | Promise<void> }).destroy;
     if (destroy) await destroy.call(pdf);
   }
@@ -77,7 +159,12 @@ async function extractDocx(buffer: Buffer) {
   const result = await mammoth.extractRawText({ buffer });
   return {
     pageCount: null,
-    pages: [{ text: result.value, pageNumber: null }],
+    pages: [{
+      text: result.value,
+      pageNumber: null,
+      extractionMethod: "native" as const,
+      ocrConfidence: null,
+    }],
   };
 }
 
@@ -93,7 +180,12 @@ export async function extractKnowledgeText(
   if (extension === ".txt" || extension === ".md") {
     return {
       pageCount: null,
-      pages: [{ text: buffer.toString("utf8"), pageNumber: null }],
+      pages: [{
+        text: buffer.toString("utf8"),
+        pageNumber: null,
+        extractionMethod: "native",
+        ocrConfidence: null,
+      }],
     };
   }
 
