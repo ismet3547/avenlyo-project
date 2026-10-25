@@ -12,13 +12,13 @@
   --muted: #667085;
   --soft: #475467;
 
-  --accent: #2b5680;
-  --accent-hover: #234768;
-  --accent-active: #1d3d5a;
-  --accent-subtle: #e7eff7;
-  --accent-subtle-hover: #dce8f3;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-active: #1e40af;
+  --accent-subtle: #eff6ff;
+  --accent-subtle-hover: #dbeafe;
   --accent-ink: #ffffff;
-  --focus-ring: #2b5680;
+  --focus-ring: #3b82f6;
 
   --success: #247a52;
   --success-subtle: #eaf6ef;
@@ -26,8 +26,8 @@
   --warning-subtle: #fff4d6;
   --danger: #b42318;
   --danger-subtle: #fef0ee;
-  --info: #2b5680;
-  --info-subtle: #e7eff7;
+  --info: #2563eb;
+  --info-subtle: #eff6ff;
 
   --shadow: 0 18px 50px rgba(16, 24, 40, .09);
 }
@@ -38,7 +38,7 @@ body {
   margin: 0;
   color: var(--text);
   background:
-    radial-gradient(circle at 78% 0%, rgba(43,86,128,.06), transparent 34rem),
+    radial-gradient(circle at 78% 0%, rgba(37,99,235,.06), transparent 34rem),
     var(--bg);
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -118,7 +118,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 22px; overflow: hidden; position: relative;
   padding: 54px 56px; display: flex; align-items: center; justify-content: space-between;
   background:
-    radial-gradient(circle at 82% 30%, rgba(43,86,128,.08), transparent 20rem),
+    radial-gradient(circle at 82% 30%, rgba(37,99,235,.08), transparent 20rem),
     linear-gradient(145deg, #ffffff, var(--bg));
   box-shadow: 0 12px 34px rgba(16,24,40,.05);
 }
@@ -143,9 +143,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: var(--accent); color: var(--accent-ink);
   font-size: 13px; font-weight: 800;
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  box-shadow: 0 7px 20px rgba(43,86,128,.14);
+  box-shadow: 0 7px 20px rgba(37,99,235,.14);
 }
-.primary:hover { transform: translateY(-1px); background: var(--accent-hover); box-shadow: 0 10px 26px rgba(43,86,128,.18); }
+.primary:hover { transform: translateY(-1px); background: var(--accent-hover); box-shadow: 0 10px 26px rgba(37,99,235,.18); }
 .primary:active { background: var(--accent-active); transform: translateY(1px); }
 .primary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 .primary.compact { min-height: 38px; padding: 0 15px; font-size: 12px; }
@@ -161,7 +161,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   width: 94px; height: 94px; border-radius: 28px;
   display: grid; place-items: center; font-size: 33px;
   color: var(--accent-ink); background: var(--accent);
-  box-shadow: 0 18px 55px rgba(43,86,128,.14);
+  box-shadow: 0 18px 55px rgba(37,99,235,.14);
   transform: rotate(-7deg);
 }
 .orbit { position: absolute; border: 1px solid var(--line); border-radius: 50%; }
@@ -282,7 +282,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .field textarea.tall { min-height: 155px; }
 .field input::placeholder, .field textarea::placeholder { color: #98a2b3; }
 .field input:focus, .field textarea:focus, .field select:focus {
-  border-color: var(--accent); box-shadow: 0 0 0 3px rgba(43,86,128,.10); background: #fff;
+  border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.10); background: #fff;
 }
 .sticky-save {
   position: sticky; bottom: 18px; z-index: 10;
@@ -358,7 +358,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   flex: 1; border: 1px solid var(--line-control); border-radius: 11px; background: #ffffff;
   color: var(--text); padding: 0 14px; outline: none; font-size: 14px;
 }
-.chat-input input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(43,86,128,.10); }
+.chat-input input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,.10); }
 .chat-input button {
   width: 48px; border: 0; border-radius: 11px; background: var(--accent);
   color: var(--accent-ink); display: grid; place-items: center; cursor: pointer;
