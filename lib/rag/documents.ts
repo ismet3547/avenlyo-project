@@ -72,6 +72,37 @@ async function recognizePdfPage(
   };
 }
 
+function ocrLanguages() {
+  const configured = process.env.AVENLYO_OCR_LANGS
+    ?.split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return configured?.length ? configured : ["tur", "eng"];
+}
+
+async function recognizePdfPage(
+  pdf: Awaited<ReturnType<typeof getDocumentProxy>>,
+  pageNumber: number,
+  worker: Worker,
+) {
+  const image = await renderPageAsImage(pdf, pageNumber, {
+    canvasImport: () => import("@napi-rs/canvas"),
+    scale: OCR_RENDER_SCALE,
+  });
+
+  const input = typeof image === "string" ? image : Buffer.from(image);
+  const result = await worker.recognize(input);
+
+  return {
+    text: result.data.text.trim(),
+    confidence:
+      typeof result.data.confidence === "number"
+        ? Math.round(result.data.confidence * 10) / 10
+        : null,
+  };
+}
+
 async function extractPdf(buffer: Buffer): Promise<{
   pages: ExtractedPage[];
   pageCount: number;
