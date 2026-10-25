@@ -1183,8 +1183,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
 
       {playgroundAgent && (
         <div className="modal-layer playground-layer" role="dialog" aria-modal="true">
-          <button className="modal-backdrop" onClick={() => setPlaygroundAgent(null)} aria-label="Playground'u kapat" />
-          <section className="playground">
+          <button
+            className="modal-backdrop"
+            onClick={() => {
+              abortRef.current?.abort();
+              setPlaygroundAgent(null);
+            }}
+            aria-label="Playground'u kapat"
+          />
+          <section className="playground playground-v2">
             <header className="playground-head">
               <div className="agent-icon">{playgroundAgent.emoji}</div>
               <div>
@@ -1199,144 +1206,333 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   RAG Debug
                 </button>
               )}
-              <button className="close-button" onClick={() => setPlaygroundAgent(null)}>×</button>
+              <button
+                className="close-button"
+                onClick={() => {
+                  abortRef.current?.abort();
+                  setPlaygroundAgent(null);
+                }}
+              >
+                ×
+              </button>
             </header>
-            {debugOpen && latestDebug && (
-              <aside className="rag-debug-panel">
-                <div className="rag-debug-head">
+
+            <div className="playground-workspace">
+              <aside className="conversation-sidebar">
+                <div className="conversation-sidebar-head">
                   <div>
-                    <span className="eyebrow accent">RETRIEVAL TRACE</span>
-                    <strong>RAG Debug</strong>
+                    <span className="eyebrow">SOHBETLER</span>
+                    <strong>Geçmiş</strong>
                   </div>
-                  <button className="close-button" onClick={() => setDebugOpen(false)}>×</button>
+                  <button
+                    className="conversation-new"
+                    onClick={startNewConversation}
+                    title="Yeni sohbet"
+                  >
+                    <Icon name="plus" size={15} />
+                  </button>
                 </div>
-                <div className="rag-debug-body">
-                  <div className="debug-query">
-                    <span>Sorgu</span>
-                    <strong>{latestDebug.query}</strong>
-                  </div>
-                  <div className="debug-stats">
-                    <div><span>Belge</span><strong>{latestDebug.assignedDocumentCount}</strong></div>
-                    <div><span>Chunk</span><strong>{latestDebug.indexedChunkCount}</strong></div>
-                    <div><span>Seçilen token</span><strong>{latestDebug.selectedTokenCount}</strong></div>
-                    <div><span>Toplam süre</span><strong>{latestDebug.timings.totalMs} ms</strong></div>
-                  </div>
-                  <div className="debug-timing">
-                    Embedding {latestDebug.timings.embeddingMs} ms · retrieval {latestDebug.timings.retrievalMs} ms
-                  </div>
-                  <div className="debug-section">
-                    <div className="debug-section-title">
-                      <strong>Final seçim</strong>
-                      <span>{latestDebug.selectedCandidates.length} chunk</span>
+
+                <div className="conversation-list">
+                  {conversationLoading && conversations.length === 0 ? (
+                    <div className="conversation-empty">Sohbetler yükleniyor…</div>
+                  ) : conversations.length === 0 ? (
+                    <div className="conversation-empty">
+                      İlk mesajını gönderdiğinde sohbet burada kaydedilecek.
                     </div>
-                    {latestDebug.selectedCandidates.length === 0 ? (
-                      <p className="debug-empty">Bu sorgu için kaynak seçilmedi.</p>
-                    ) : (
-                      <div className="debug-candidates">
-                        {latestDebug.selectedCandidates.map((candidate, index) => (
-                          <button
-                            key={candidate.chunkId}
-                            onClick={() =>
-                              openSource(
-                                candidate.documentId,
-                                candidate.documentName,
-                                candidate.pageStart,
-                              )
-                            }
-                          >
-                            <span className="debug-rank">#{index + 1}</span>
-                            <span className="debug-candidate-main">
-                              <strong>
-                                {candidate.documentName}
-                                {candidate.pageStart ? ` · s.${candidate.pageStart}` : ""}
-                              </strong>
-                              <small>
-                                {candidate.semanticScore !== undefined
-                                  ? `semantic ${candidate.semanticScore.toFixed(3)} · `
-                                  : ""}
-                                {candidate.keywordRank
-                                  ? `keyword #${candidate.keywordRank} · `
-                                  : ""}
-                                final {candidate.finalScore?.toFixed(4) || "—"}
-                              </small>
-                              {candidate.extractionMethod === "ocr" && (
-                                <small>
-                                  OCR
-                                  {candidate.ocrConfidence !== null
-                                    ? ` · güven %${candidate.ocrConfidence}`
-                                    : ""}
-                                </small>
-                              )}
-                            </span>
-                          </button>
-                        ))}
+                  ) : (
+                    conversations.map((conversation) => (
+                      <div
+                        className={`conversation-item ${activeConversationId === conversation.id ? "active" : ""}`}
+                        key={conversation.id}
+                      >
+                        <button
+                          className="conversation-open"
+                          onClick={() => void loadConversation(conversation.id)}
+                        >
+                          <strong>{conversation.title}</strong>
+                        </button>
+                        <button
+                          className="conversation-delete"
+                          onClick={() => void removeConversation(conversation)}
+                          aria-label="Sohbeti sil"
+                          title="Sohbeti sil"
+                        >
+                          ×
+                        </button>
                       </div>
-                    )}
-                  </div>
-                  <div className="debug-foot">
-                    Semantic aday: {latestDebug.semanticCandidates.length} · keyword aday: {latestDebug.keywordCandidates.length}
-                  </div>
+                    ))
+                  )}
                 </div>
               </aside>
-            )}
-            <div className="chat-body">
-              {chat.length === 0 ? (
-                <div className="chat-empty">
-                  <div className="empty-spark">✦</div>
-                  <h3>Ajanı test et</h3>
-                  <p>Gerçek bir müşteri gibi mesaj gönder. Ajan işletme profili ve kendisine bağlanan bilgi kaynaklarından ilgili parçaları kullanacak.</p>
-                  <div className="suggestions">
-                    {["Bana işletmenizi kısaca anlat.", "Hangi hizmetleri sunuyorsunuz?", "Neden sizi tercih etmeliyim?"].map((text) => (
-                      <button key={text} onClick={() => setMessage(text)}>{text}</button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="messages">
-                  {chat.map((item, index) => (
-                    <div key={index} className={`message ${item.role}`}>
-                      <span>{item.role === "assistant" ? playgroundAgent.emoji : "Siz"}</span>
-                      <div className="message-content">
-                        <p>{item.content}</p>
-                        {item.role === "assistant" && item.sources && item.sources.length > 0 && (
-                          <div className="message-sources">
-                            <strong>Kaynaklar</strong>
-                            <div>
-                              {item.sources.map((source, sourceIndex) => (
-                                <button
-                                  className="source-chip"
-                                  key={`${source.documentId}-${source.pageStart}-${sourceIndex}`}
-                                  onClick={() =>
-                                    openSource(
-                                      source.documentId,
-                                      source.documentName,
-                                      source.pageStart,
-                                    )
-                                  }
-                                >
-                                  {source.documentName}
-                                  {source.pageStart ? ` · s.${source.pageStart}` : ""}
-                                  {source.extractionMethod === "ocr" ? " · OCR" : ""}
-                                  {source.ocrConfidence !== null &&
-                                  source.ocrConfidence !== undefined
-                                    ? ` %${source.ocrConfidence}`
-                                    : ""}
-                                </button>
-                              ))}
-                            </div>
+
+              <div className="playground-chat-panel">
+                {debugOpen && latestDebug && (
+                  <aside className="rag-debug-panel rag-debug-v2">
+                    <div className="rag-debug-head">
+                      <div>
+                        <span className="eyebrow accent">RETRIEVAL TRACE</span>
+                        <strong>RAG Debug</strong>
+                      </div>
+                      <button className="close-button" onClick={() => setDebugOpen(false)}>×</button>
+                    </div>
+
+                    <div className="rag-debug-body">
+                      <div className="debug-query">
+                        <span>Sorgu</span>
+                        <strong>{latestDebug.query}</strong>
+                      </div>
+
+                      <div className="debug-confidence-row">
+                        <span className={`confidence-pill confidence-${latestDebug.confidence}`}>
+                          {latestDebug.confidence === "high"
+                            ? "Yüksek güven"
+                            : latestDebug.confidence === "medium"
+                              ? "Orta güven"
+                              : latestDebug.confidence === "low"
+                                ? "Düşük güven"
+                                : "Kaynak yok"}
+                        </span>
+                        <small>semantic eşik {latestDebug.semanticThreshold.toFixed(2)}</small>
+                      </div>
+
+                      <div className="debug-stats">
+                        <div><span>Belge</span><strong>{latestDebug.assignedDocumentCount}</strong></div>
+                        <div><span>Chunk</span><strong>{latestDebug.indexedChunkCount}</strong></div>
+                        <div><span>Seçilen token</span><strong>{latestDebug.selectedTokenCount}</strong></div>
+                        <div><span>Toplam süre</span><strong>{latestDebug.timings.totalMs} ms</strong></div>
+                      </div>
+
+                      <div className="debug-timing">
+                        Embedding {latestDebug.timings.embeddingMs} ms · retrieval {latestDebug.timings.retrievalMs} ms
+                      </div>
+
+                      <div className="debug-section">
+                        <div className="debug-section-title">
+                          <strong>Final seçim</strong>
+                          <span>{latestDebug.selectedCandidates.length} chunk</span>
+                        </div>
+
+                        {latestDebug.selectedCandidates.length === 0 ? (
+                          <p className="debug-empty">
+                            Relevance eşiğini geçen kaynak bulunamadı.
+                          </p>
+                        ) : (
+                          <div className="debug-candidates">
+                            {latestDebug.selectedCandidates.map((candidate, index) => (
+                              <button
+                                key={candidate.chunkId}
+                                onClick={() =>
+                                  openSource(
+                                    candidate.documentId,
+                                    candidate.documentName,
+                                    candidate.pageStart,
+                                    candidate.chunkId,
+                                  )
+                                }
+                              >
+                                <span className="debug-rank">#{index + 1}</span>
+                                <span className="debug-candidate-main">
+                                  <strong>
+                                    {candidate.documentName}
+                                    {candidate.pageStart ? ` · s.${candidate.pageStart}` : ""}
+                                  </strong>
+                                  <small>
+                                    {candidate.semanticScore !== undefined
+                                      ? `semantic ${candidate.semanticScore.toFixed(3)} · `
+                                      : ""}
+                                    {candidate.keywordRank
+                                      ? `keyword #${candidate.keywordRank} · `
+                                      : ""}
+                                    final {candidate.finalScore?.toFixed(4) || "—"}
+                                  </small>
+                                  {candidate.selectionReason && (
+                                    <small>seçim: {candidate.selectionReason}</small>
+                                  )}
+                                  {candidate.preview && (
+                                    <span className="debug-preview">{candidate.preview}</span>
+                                  )}
+                                </span>
+                              </button>
+                            ))}
                           </div>
                         )}
                       </div>
+
+                      {latestDebug.rejectedCandidates.length > 0 && (
+                        <div className="debug-section">
+                          <div className="debug-section-title">
+                            <strong>Elenen adaylar</strong>
+                            <span>{latestDebug.rejectedCandidates.length}</span>
+                          </div>
+                          <div className="debug-rejected">
+                            {latestDebug.rejectedCandidates.slice(0, 6).map((candidate) => (
+                              <div key={`rejected-${candidate.chunkId}-${candidate.rejectedReason}`}>
+                                <strong>
+                                  {candidate.documentName}
+                                  {candidate.pageStart ? ` · s.${candidate.pageStart}` : ""}
+                                </strong>
+                                <span>{candidate.rejectedReason || "elendi"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="debug-foot">
+                        Semantic aday: {latestDebug.semanticCandidates.length} · keyword aday: {latestDebug.keywordCandidates.length}
+                      </div>
                     </div>
-                  ))}
-                  {sending && <div className="message assistant"><span>{playgroundAgent.emoji}</span><p className="typing">Yanıt hazırlanıyor<span>...</span></p></div>}
+                  </aside>
+                )}
+
+                <div className="chat-body">
+                  {conversationLoading ? (
+                    <div className="chat-empty">
+                      <div className="empty-spark">✦</div>
+                      <h3>Sohbet yükleniyor</h3>
+                    </div>
+                  ) : chat.length === 0 ? (
+                    <div className="chat-empty">
+                      <div className="empty-spark">✦</div>
+                      <h3>Yeni sohbet</h3>
+                      <p>
+                        Mesaj gönderdiğinde sohbet bu ajan için yerel olarak kaydedilir.
+                        Ajan yalnızca kendisine bağlanan bilgi kaynaklarından ilgili
+                        parçaları kullanır.
+                      </p>
+                      <div className="suggestions">
+                        {[
+                          "Bana işletmenizi kısaca anlat.",
+                          "Hangi hizmetleri sunuyorsunuz?",
+                          "Neden sizi tercih etmeliyim?",
+                        ].map((text) => (
+                          <button key={text} onClick={() => setMessage(text)}>
+                            {text}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="messages">
+                      {chat.map((item, index) => {
+                        const isLastAssistant =
+                          item.role === "assistant" &&
+                          index === chat.length - 1;
+
+                        return (
+                          <div
+                            key={item.id || index}
+                            className={`message ${item.role}`}
+                          >
+                            <span>
+                              {item.role === "assistant"
+                                ? playgroundAgent.emoji
+                                : "Siz"}
+                            </span>
+
+                            <div className="message-content">
+                              {item.role === "assistant" ? (
+                                item.content ? (
+                                  <MarkdownMessage content={item.content} />
+                                ) : (
+                                  <p className="typing">
+                                    Yanıt hazırlanıyor<span>...</span>
+                                  </p>
+                                )
+                              ) : (
+                                <p>{item.content}</p>
+                              )}
+
+                              {item.role === "assistant" &&
+                                item.sources &&
+                                item.sources.length > 0 && (
+                                  <div className="message-sources">
+                                    <strong>Kaynaklar</strong>
+                                    <div>
+                                      {item.sources.map((source, sourceIndex) => (
+                                        <button
+                                          className="source-chip"
+                                          key={`${source.documentId}-${source.chunkId || source.pageStart}-${sourceIndex}`}
+                                          onClick={() =>
+                                            openSource(
+                                              source.documentId,
+                                              source.documentName,
+                                              source.pageStart,
+                                              source.chunkId,
+                                            )
+                                          }
+                                        >
+                                          {source.documentName}
+                                          {source.pageStart
+                                            ? ` · s.${source.pageStart}`
+                                            : ""}
+                                          {source.extractionMethod === "ocr"
+                                            ? " · OCR"
+                                            : ""}
+                                          {source.ocrConfidence !== null &&
+                                          source.ocrConfidence !== undefined
+                                            ? ` %${source.ocrConfidence}`
+                                            : ""}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                              {item.role === "assistant" &&
+                                item.content &&
+                                !item.streaming && (
+                                  <div className="message-actions">
+                                    <button
+                                      onClick={() => void copyMessage(item.content)}
+                                    >
+                                      Kopyala
+                                    </button>
+                                    {isLastAssistant &&
+                                      activeConversationId &&
+                                      !sending && (
+                                        <button onClick={regenerateLastResponse}>
+                                          Yeniden oluştur
+                                        </button>
+                                      )}
+                                  </div>
+                                )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
+
+                <form className="chat-input" onSubmit={sendMessage}>
+                  <input
+                    value={message}
+                    onChange={(event) => setMessage(event.target.value)}
+                    placeholder="Bir mesaj yazın..."
+                    disabled={sending}
+                  />
+                  {sending ? (
+                    <button
+                      type="button"
+                      className="stop-button"
+                      onClick={stopResponse}
+                      aria-label="Yanıtı durdur"
+                    >
+                      ■
+                    </button>
+                  ) : (
+                    <button
+                      disabled={!message.trim()}
+                      aria-label="Gönder"
+                    >
+                      <Icon name="send" />
+                    </button>
+                  )}
+                </form>
+              </div>
             </div>
-            <form className="chat-input" onSubmit={sendMessage}>
-              <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Bir mesaj yazın..." />
-              <button disabled={!message.trim() || sending} aria-label="Gönder"><Icon name="send" /></button>
-            </form>
           </section>
         </div>
       )}
@@ -1347,6 +1543,16 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
           documentName={viewer.documentName}
           initialPage={viewer.page}
           onClose={() => setViewer(null)}
+        />
+      )}
+
+      {sourcePreview && (
+        <TextSourceViewer
+          documentId={sourcePreview.documentId}
+          documentName={sourcePreview.documentName}
+          chunkId={sourcePreview.chunkId}
+          page={sourcePreview.page}
+          onClose={() => setSourcePreview(null)}
         />
       )}
 
