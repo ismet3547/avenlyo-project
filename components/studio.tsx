@@ -78,7 +78,11 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const router = useRouter();
   const view = initialView;
   const [business, setBusiness] = useState<BusinessProfile>(emptyBusiness);
-  const [agents, setAgents] = useState<Agent[]>([]);\n  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);\n  const [uploading, setUploading] = useState(false);\n  const [dragActive, setDragActive] = useState(false);\n  const [agentKnowledgeIds, setAgentKnowledgeIds] = useState<string[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const [agentKnowledgeIds, setAgentKnowledgeIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [businessSaving, setBusinessSaving] = useState(false);
   const [notice, setNotice] = useState("");
