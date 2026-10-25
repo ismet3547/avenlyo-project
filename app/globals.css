@@ -1279,6 +1279,186 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   color: var(--muted);
 }
 
+
+/* Playground polish v2 */
+.playground-chat-panel .chat-body {
+  background: #ffffff;
+  padding: 28px 30px 30px;
+}
+.messages {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  gap: 24px;
+}
+.message {
+  max-width: 92%;
+  gap: 12px;
+}
+.message > span {
+  min-width: 36px;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #f7f9fc;
+}
+.message.user > span {
+  background: var(--accent-subtle);
+  border-color: #d7e6fb;
+  color: var(--accent);
+}
+.message-content {
+  gap: 10px;
+}
+.message.assistant .markdown-message {
+  padding: 13px 15px;
+  border-color: #e1e6ed;
+  border-radius: 5px 15px 15px 15px;
+  box-shadow: 0 5px 16px rgba(16,24,40,.035);
+  font-size: 13.5px;
+  line-height: 1.72;
+}
+.message.user p {
+  padding: 11px 14px;
+  border-color: #d6e5fb;
+  border-radius: 15px 5px 15px 15px;
+  background: #f1f6ff;
+}
+.message-sources {
+  gap: 7px;
+  padding-top: 1px;
+}
+.message-sources > strong {
+  font-size: 9px;
+  letter-spacing: .075em;
+  color: #7a8798;
+}
+.message-sources > div {
+  gap: 7px;
+}
+.source-chip {
+  max-width: 310px;
+  min-height: 29px;
+  padding: 5px 10px;
+  border-color: #cbdcf1;
+  background: #f5f9ff;
+  font-size: 10.5px;
+  font-weight: 750;
+  box-shadow: 0 2px 7px rgba(37,99,235,.035);
+}
+.source-chip::before {
+  content: "↗";
+  margin-right: 5px;
+  opacity: .72;
+  font-size: 10px;
+}
+.source-chip:hover {
+  transform: translateY(-1px);
+  border-color: #9ebce0;
+  background: #eaf3ff;
+}
+.message-actions {
+  gap: 7px;
+  padding-top: 1px;
+}
+.message-actions button {
+  min-height: 29px;
+  padding: 5px 10px;
+  border-color: transparent;
+  background: #f7f9fc;
+  color: #657386;
+  font-size: 10px;
+  font-weight: 750;
+}
+.message-actions button:hover {
+  border-color: #d0dceb;
+  background: #eef5ff;
+  color: var(--accent);
+}
+.chat-input {
+  min-height: 82px;
+  padding: 14px 16px;
+  background: #ffffff;
+}
+.chat-input input {
+  height: 52px;
+  border-radius: 13px;
+  padding: 0 16px;
+  font-size: 13.5px;
+  background: #ffffff;
+}
+.chat-input button {
+  width: 52px;
+  border-radius: 13px;
+}
+.rag-debug-v2 {
+  width: min(380px, calc(100% - 28px));
+  border-left-color: #dfe6ee;
+  background: rgba(255,255,255,.995);
+  box-shadow: -12px 0 34px rgba(16,24,40,.075);
+}
+.rag-debug-head {
+  min-height: 72px;
+  padding: 13px 15px 13px 17px;
+}
+.rag-debug-head strong {
+  font-size: 14px;
+}
+.rag-debug-body {
+  padding: 17px;
+}
+.debug-query {
+  padding: 13px;
+  border-radius: 11px;
+}
+.debug-query strong {
+  font-size: 11.5px;
+}
+.debug-stats {
+  gap: 8px;
+  margin-top: 11px;
+}
+.debug-stats > div {
+  padding: 11px;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+.debug-stats strong {
+  font-size: 14px;
+}
+.debug-section {
+  margin-top: 20px;
+}
+.debug-section-title strong {
+  font-size: 11.5px;
+}
+.debug-candidates {
+  gap: 8px;
+}
+.debug-candidates button {
+  padding: 11px;
+  border-radius: 10px;
+}
+.debug-candidate-main strong {
+  font-size: 10.5px;
+}
+.debug-candidate-main small {
+  font-size: 9.5px;
+}
+.debug-preview {
+  margin-top: 7px;
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+@supports selector(:has(*)) {
+  .playground-chat-panel:has(.rag-debug-v2) .chat-body {
+    padding-right: 404px;
+  }
+  .playground-chat-panel:has(.rag-debug-v2) .messages {
+    width: 100%;
+  }
+}
+
 @media (max-width: 1100px) {
   .agent-grid { grid-template-columns: repeat(2, 1fr); }
   .agent-grid.large { grid-template-columns: repeat(2, 1fr); }
@@ -1329,6 +1509,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .pdf-viewer-controls { width: 100%; overflow-x: auto; }
   .pdf-viewer-body { padding: 14px; }
   .rag-debug-panel { width: 100%; top: 0; }
+  .playground-chat-panel:has(.rag-debug-v2) .chat-body { padding-right: 16px; }
   .playground-head { min-height: 72px; }
   .conversation-sidebar { display: none; }
   .message { max-width: 96%; }
