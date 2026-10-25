@@ -10,6 +10,7 @@ describe("tool registry strict schemas", () => {
     expect(catalog.inputSchema.type).toBe("object");
     expect(catalog.inputSchema.additionalProperties).toBe(false);
     expect(catalog.inputSchema.required).toEqual(["order_id"]);
+    expect(catalog.executionReady).toBe(true);
   });
 
   it("rejects unknown properties at runtime", () => {
@@ -33,5 +34,6 @@ describe("tool registry strict schemas", () => {
 
     expect(required).toEqual(["name", "phone", "email", "notes"]);
     expect(catalog.inputSchema.additionalProperties).toBe(false);
+    expect(catalog.executionReady).toBe(false);
   });
 });
