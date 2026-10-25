@@ -93,7 +93,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 14px;
 }
 .eyebrow {
-  display: block; color: #7b857e; font-size: 11px; line-height: 1.2;
+  display: block; color: var(--muted); font-size: 11px; line-height: 1.2;
   font-weight: 800; letter-spacing: .12em;
 }
 .eyebrow.accent { color: var(--accent); }
@@ -185,7 +185,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .section-heading { display: flex; align-items: end; justify-content: space-between; margin-bottom: 17px; }
 .section-heading h2 { margin: 7px 0 0; font-size: 24px; letter-spacing: -.035em; font-weight: 700; }
 .text-button { display: inline-flex; align-items: center; gap: 7px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 700; }
-.text-button:hover { color: #1f251f; }
+.text-button:hover { color: var(--accent); }
 .agent-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 .agent-grid.large { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .agent-card {
