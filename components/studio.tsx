@@ -1511,7 +1511,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                               {toolRiskLabel(tool.riskLevel)} · {toolApprovalLabel(tool.approvalPolicy)}
                             </small>
                           </span>
-                          <span className={`tool-permission-state ${tool.enabled ? "active" : ""}`}>
+                          <span className={`tool-permission-state ${tool.enabled && tool.executionReady ? "active" : ""}`}>
                             {!tool.executionReady
                               ? "Yakında"
                               : tool.enabled
