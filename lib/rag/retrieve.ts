@@ -18,8 +18,26 @@ export type RetrievedKnowledge = {
 
 export type RetrievalResult = {
   items: RetrievedKnowledge[];
+  confidence: RagDebugTrace["confidence"];
   debug: RagDebugTrace;
 };
+
+type RankedCandidate = {
+  chunk: StoredChunk;
+  score: number;
+  semanticScore?: number;
+  keywordRank?: number;
+};
+
+const DEFAULT_SEMANTIC_THRESHOLD = 0.22;
+const NEAR_DUPLICATE_THRESHOLD = 0.82;
+
+function semanticThreshold() {
+  const parsed = Number(process.env.AVENLYO_RAG_SEMANTIC_MIN);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1
+    ? parsed
+    : DEFAULT_SEMANTIC_THRESHOLD;
+}
 
 function cosineSimilarity(a: number[], b: number[]) {
   if (!a.length || a.length !== b.length) return 0;
@@ -44,6 +62,11 @@ function rrfScore(rank: number, weight = 1) {
   return weight / (60 + rank);
 }
 
+function preview(text: string) {
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact.length > 190 ? `${compact.slice(0, 190).trim()}…` : compact;
+}
+
 function candidate(
   chunk: StoredChunk,
   extra: Partial<RagDebugCandidate> = {},
@@ -55,8 +78,62 @@ function candidate(
     pageStart: chunk.pageStart,
     extractionMethod: chunk.extractionMethod,
     ocrConfidence: chunk.ocrConfidence,
+    preview: preview(chunk.text),
     ...extra,
   };
+}
+
+function wordSet(text: string) {
+  return new Set(
+    text
+      .toLocaleLowerCase("tr")
+      .match(/[\p{L}\p{N}]{3,}/gu)
+      ?.slice(0, 350) ?? [],
+  );
+}
+
+function jaccardSimilarity(left: string, right: string) {
+  const a = wordSet(left);
+  const b = wordSet(right);
+  if (!a.size || !b.size) return 0;
+
+  let intersection = 0;
+  for (const word of a) {
+    if (b.has(word)) intersection += 1;
+  }
+
+  return intersection / (a.size + b.size - intersection);
+}
+
+function selectionReason(item: RankedCandidate) {
+  if (item.semanticScore !== undefined && item.keywordRank !== undefined) {
+    return "semantic + keyword";
+  }
+  if (item.keywordRank !== undefined) return "keyword";
+  return "semantic";
+}
+
+function confidenceFor(items: RankedCandidate[]): RagDebugTrace["confidence"] {
+  if (!items.length) return "none";
+  const top = items[0];
+
+  if (
+    (top.semanticScore ?? 0) >= 0.5 ||
+    (top.keywordRank !== undefined &&
+      top.keywordRank <= 2 &&
+      (top.semanticScore ?? 0) >= 0.3)
+  ) {
+    return "high";
+  }
+
+  if (
+    (top.semanticScore ?? 0) >= 0.3 ||
+    (top.keywordRank !== undefined && top.keywordRank <= 2)
+  ) {
+    return "medium";
+  }
+
+  return "low";
 }
 
 export async function retrieveKnowledgeForAgent(
@@ -65,6 +142,7 @@ export async function retrieveKnowledgeForAgent(
   limit = 6,
 ): Promise<RetrievalResult> {
   const startedAt = performance.now();
+  const threshold = semanticThreshold();
   const documentIds = getAgentDocumentIds(agentId);
   const allChunks = getChunksForDocuments(documentIds);
 
@@ -83,30 +161,23 @@ export async function retrieveKnowledgeForAgent(
         }))
         .filter((item) => Number.isFinite(item.similarity))
         .sort((a, b) => b.similarity - a.similarity)
-        .slice(0, 12);
+        .slice(0, 16);
     } catch {
       embeddingMs = performance.now() - embeddingStartedAt;
       semanticScored = [];
     }
   }
 
-  const keyword = searchKnowledgeFts(query, documentIds, 8);
-  const scores = new Map<
-    string,
-    {
-      chunk: StoredChunk;
-      score: number;
-      semanticScore?: number;
-      keywordRank?: number;
-    }
-  >();
+  const keyword = searchKnowledgeFts(query, documentIds, 10);
+  const scores = new Map<string, RankedCandidate>();
 
   semanticScored.forEach((item, index) => {
+    const existing = scores.get(item.chunk.id);
     scores.set(item.chunk.id, {
       chunk: item.chunk,
-      score: (scores.get(item.chunk.id)?.score ?? 0) + rrfScore(index + 1),
+      score: (existing?.score ?? 0) + rrfScore(index + 1),
       semanticScore: item.similarity,
-      keywordRank: scores.get(item.chunk.id)?.keywordRank,
+      keywordRank: existing?.keywordRank,
     });
   });
 
@@ -121,10 +192,93 @@ export async function retrieveKnowledgeForAgent(
   });
 
   const ranked = [...scores.values()].sort((a, b) => b.score - a.score);
-  const items = ranked.slice(0, limit).map((item) => ({
+  const rejected: RagDebugCandidate[] = [];
+  const relevant = ranked.filter((item) => {
+    const passes =
+      item.keywordRank !== undefined ||
+      (item.semanticScore !== undefined && item.semanticScore >= threshold);
+
+    if (!passes) {
+      rejected.push(
+        candidate(item.chunk, {
+          semanticScore: item.semanticScore,
+          keywordRank: item.keywordRank,
+          finalScore: item.score,
+          rejectedReason: `semantic < ${threshold.toFixed(2)} ve keyword eşleşmesi yok`,
+        }),
+      );
+    }
+
+    return passes;
+  });
+
+  const selected: RankedCandidate[] = [];
+  const pageKeys = new Set<string>();
+  const perDocument = new Map<string, number>();
+  const maxPerDocument = documentIds.length > 1 ? 2 : 4;
+
+  for (const item of relevant) {
+    if (selected.length >= limit) break;
+
+    const pageKey =
+      item.chunk.pageStart !== null
+        ? `${item.chunk.documentId}:${item.chunk.pageStart}`
+        : "";
+
+    if (pageKey && pageKeys.has(pageKey)) {
+      rejected.push(
+        candidate(item.chunk, {
+          semanticScore: item.semanticScore,
+          keywordRank: item.keywordRank,
+          finalScore: item.score,
+          rejectedReason: "aynı sayfadan daha güçlü bir chunk zaten seçildi",
+        }),
+      );
+      continue;
+    }
+
+    const documentCount = perDocument.get(item.chunk.documentId) ?? 0;
+    if (documentCount >= maxPerDocument) {
+      rejected.push(
+        candidate(item.chunk, {
+          semanticScore: item.semanticScore,
+          keywordRank: item.keywordRank,
+          finalScore: item.score,
+          rejectedReason: "belge çeşitliliği için document cap uygulandı",
+        }),
+      );
+      continue;
+    }
+
+    const duplicate = selected.some(
+      (current) =>
+        current.chunk.documentId === item.chunk.documentId &&
+        jaccardSimilarity(current.chunk.text, item.chunk.text) >=
+          NEAR_DUPLICATE_THRESHOLD,
+    );
+
+    if (duplicate) {
+      rejected.push(
+        candidate(item.chunk, {
+          semanticScore: item.semanticScore,
+          keywordRank: item.keywordRank,
+          finalScore: item.score,
+          rejectedReason: "yakın-duplicate chunk",
+        }),
+      );
+      continue;
+    }
+
+    selected.push(item);
+    if (pageKey) pageKeys.add(pageKey);
+    perDocument.set(item.chunk.documentId, documentCount + 1);
+  }
+
+  const items = selected.map((item) => ({
     chunk: item.chunk,
     score: item.score,
   }));
+  const confidence = confidenceFor(selected);
 
   const totalMs = performance.now() - startedAt;
   const debug: RagDebugTrace = {
@@ -137,17 +291,21 @@ export async function retrieveKnowledgeForAgent(
     keywordCandidates: keyword.map((chunk, index) =>
       candidate(chunk, { keywordRank: index + 1 }),
     ),
-    selectedCandidates: ranked.slice(0, limit).map((item) =>
+    selectedCandidates: selected.map((item) =>
       candidate(item.chunk, {
         semanticScore: item.semanticScore,
         keywordRank: item.keywordRank,
         finalScore: item.score,
+        selectionReason: selectionReason(item),
       }),
     ),
+    rejectedCandidates: rejected.slice(0, 16),
     selectedTokenCount: items.reduce(
       (sum, item) => sum + item.chunk.tokenCount,
       0,
     ),
+    confidence,
+    semanticThreshold: threshold,
     timings: {
       embeddingMs: Math.round(embeddingMs),
       retrievalMs: Math.max(0, Math.round(totalMs - embeddingMs)),
@@ -155,7 +313,7 @@ export async function retrieveKnowledgeForAgent(
     },
   };
 
-  return { items, debug };
+  return { items, confidence, debug };
 }
 
 export function sourcesFromRetrieved(
@@ -175,6 +333,7 @@ export function sourcesFromRetrieved(
     seen.add(key);
 
     sources.push({
+      chunkId: item.chunk.id,
       documentId: item.chunk.documentId,
       documentName: item.chunk.documentName,
       pageStart: item.chunk.pageStart,
