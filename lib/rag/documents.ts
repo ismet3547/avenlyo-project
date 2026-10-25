@@ -100,12 +100,10 @@ async function extractPdf(buffer: Buffer): Promise<{
         ? [rawText]
         : [];
 
-    const needsOcr = pageTexts
-      .map((text, index) => ({
-        index,
-        text: String(text || "").trim(),
-      }))
-      .filter((page) => page.text.length < NATIVE_TEXT_THRESHOLD);
+    const needsOcr = Array.from({ length: pdf.numPages }, (_, index) => ({
+      index,
+      text: String(pageTexts[index] || "").trim(),
+    })).filter((page) => page.text.length < NATIVE_TEXT_THRESHOLD);
 
     if (needsOcr.length > OCR_PAGE_LIMIT) {
       throw new Error(
