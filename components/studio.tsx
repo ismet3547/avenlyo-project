@@ -1393,22 +1393,22 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                       const unavailable = !tool.enabled;
 
                       return (
-                        <label
-                          className={`tool-permission-option ${unavailable ? "disabled" : ""}`}
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={checked}
+                          aria-disabled={unavailable}
+                          disabled={unavailable}
+                          className={`tool-permission-option ${checked ? "selected" : ""} ${unavailable ? "disabled" : ""}`}
                           key={tool.id}
+                          onClick={() =>
+                            setAgentToolIds((current) =>
+                              checked
+                                ? current.filter((id) => id !== tool.id)
+                                : [...current, tool.id],
+                            )
+                          }
                         >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={unavailable}
-                            onChange={() =>
-                              setAgentToolIds((current) =>
-                                checked
-                                  ? current.filter((id) => id !== tool.id)
-                                  : [...current, tool.id],
-                              )
-                            }
-                          />
                           <span className="knowledge-option-check">
                             {checked && <Icon name="check" size={14} />}
                           </span>
@@ -1421,7 +1421,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                           <span className={`tool-permission-state ${tool.enabled ? "active" : ""}`}>
                             {tool.enabled ? "Katalog aktif" : "Araç kapalı"}
                           </span>
-                        </label>
+                        </button>
                       );
                     })}
                   </div>
