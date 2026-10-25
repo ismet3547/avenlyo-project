@@ -28,6 +28,7 @@ export type AppData = {
 };
 
 export type KnowledgeStatus = "processing" | "ready" | "error";
+export type ExtractionMethod = "native" | "ocr" | "mixed";
 
 export type KnowledgeDocument = {
   id: string;
@@ -40,6 +41,8 @@ export type KnowledgeDocument = {
   status: KnowledgeStatus;
   pageCount: number | null;
   chunkCount: number;
+  extractionMethod: ExtractionMethod | null;
+  ocrPageCount: number;
   error: string | null;
   createdAt: string;
   updatedAt: string;
@@ -51,10 +54,40 @@ export type KnowledgeSource = {
   pageStart: number | null;
   pageEnd: number | null;
   score?: number;
+  extractionMethod?: "native" | "ocr";
+  ocrConfidence?: number | null;
+};
+
+export type RagDebugCandidate = {
+  chunkId: string;
+  documentId: string;
+  documentName: string;
+  pageStart: number | null;
+  extractionMethod: "native" | "ocr";
+  ocrConfidence: number | null;
+  semanticScore?: number;
+  keywordRank?: number;
+  finalScore?: number;
+};
+
+export type RagDebugTrace = {
+  query: string;
+  assignedDocumentCount: number;
+  indexedChunkCount: number;
+  semanticCandidates: RagDebugCandidate[];
+  keywordCandidates: RagDebugCandidate[];
+  selectedCandidates: RagDebugCandidate[];
+  selectedTokenCount: number;
+  timings: {
+    embeddingMs: number;
+    retrievalMs: number;
+    totalMs: number;
+  };
 };
 
 export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   sources?: KnowledgeSource[];
+  debug?: RagDebugTrace;
 };

@@ -3,6 +3,8 @@ import { getEncoding } from "js-tiktoken";
 export type ExtractedPage = {
   text: string;
   pageNumber: number | null;
+  extractionMethod: "native" | "ocr";
+  ocrConfidence: number | null;
 };
 
 export type TextChunk = {
@@ -10,6 +12,8 @@ export type TextChunk = {
   tokenCount: number;
   pageStart: number | null;
   pageEnd: number | null;
+  extractionMethod: "native" | "ocr";
+  ocrConfidence: number | null;
 };
 
 const encoding = getEncoding("o200k_base");
@@ -46,6 +50,8 @@ export function chunkExtractedPages(pages: ExtractedPage[]): TextChunk[] {
         tokenCount: slice.length,
         pageStart: page.pageNumber,
         pageEnd: page.pageNumber,
+        extractionMethod: page.extractionMethod,
+        ocrConfidence: page.ocrConfidence,
       });
 
       if (start + TARGET_TOKENS >= tokens.length) break;

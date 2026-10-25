@@ -1,7 +1,11 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import type { KnowledgeDocument, KnowledgeStatus } from "@/lib/types";
+import type {
+  ExtractionMethod,
+  KnowledgeDocument,
+  KnowledgeStatus,
+} from "@/lib/types";
 
 const dataDir = path.join(process.cwd(), "data");
 const databasePath = path.join(dataDir, "knowledge.db");
@@ -17,6 +21,8 @@ type DocumentRow = {
   status: KnowledgeStatus;
   page_count: number | null;
   chunk_count: number;
+  extraction_method: ExtractionMethod | null;
+  ocr_page_count: number;
   error: string | null;
   stored_path: string;
   created_at: string;
@@ -33,6 +39,8 @@ type ChunkRow = {
   page_start: number | null;
   page_end: number | null;
   embedding: string;
+  extraction_method: "native" | "ocr";
+  ocr_confidence: number | null;
 };
 
 export type StoredKnowledgeDocument = KnowledgeDocument & {
@@ -49,6 +57,8 @@ export type StoredChunk = {
   pageStart: number | null;
   pageEnd: number | null;
   embedding: number[];
+  extractionMethod: "native" | "ocr";
+  ocrConfidence: number | null;
 };
 
 export type ChunkInsert = Omit<StoredChunk, "documentName">;
@@ -65,6 +75,8 @@ function mapDocument(row: DocumentRow): StoredKnowledgeDocument {
     status: row.status,
     pageCount: row.page_count,
     chunkCount: row.chunk_count,
+    extractionMethod: row.extraction_method ?? null,
+    ocrPageCount: row.ocr_page_count ?? 0,
     error: row.error,
     storedPath: row.stored_path,
     createdAt: row.created_at,
@@ -98,7 +110,21 @@ function mapChunk(row: ChunkRow): StoredChunk {
     pageStart: row.page_start,
     pageEnd: row.page_end,
     embedding,
+    extractionMethod: row.extraction_method ?? "native",
+    ocrConfidence: row.ocr_confidence ?? null,
   };
+}
+
+function ensureColumn(
+  database: Database.Database,
+  table: string,
+  column: string,
+  definition: string,
+) {
+  const columns = database.pragma(`table_info(${table})`) as Array<{ name: string }>;
+  if (!columns.some((item) => item.name === column)) {
+    database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 function createDatabase() {
@@ -120,6 +146,8 @@ function createDatabase() {
       status TEXT NOT NULL CHECK(status IN ('processing', 'ready', 'error')),
       page_count INTEGER,
       chunk_count INTEGER NOT NULL DEFAULT 0,
+      extraction_method TEXT,
+      ocr_page_count INTEGER NOT NULL DEFAULT 0,
       error TEXT,
       stored_path TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -135,6 +163,8 @@ function createDatabase() {
       page_start INTEGER,
       page_end INTEGER,
       embedding TEXT NOT NULL,
+      extraction_method TEXT NOT NULL DEFAULT 'native',
+      ocr_confidence REAL,
       UNIQUE(document_id, chunk_index)
     );
 
@@ -154,10 +184,24 @@ function createDatabase() {
       created_at TEXT NOT NULL,
       PRIMARY KEY(agent_id, document_id)
     );
-
-    PRAGMA user_version = 1;
   `);
 
+  ensureColumn(database, "documents", "extraction_method", "TEXT");
+  ensureColumn(
+    database,
+    "documents",
+    "ocr_page_count",
+    "INTEGER NOT NULL DEFAULT 0",
+  );
+  ensureColumn(
+    database,
+    "chunks",
+    "extraction_method",
+    "TEXT NOT NULL DEFAULT 'native'",
+  );
+  ensureColumn(database, "chunks", "ocr_confidence", "REAL");
+
+  database.pragma("user_version = 2");
   return database;
 }
 
@@ -194,10 +238,12 @@ export function insertKnowledgeDocument(input: StoredKnowledgeDocument) {
     .prepare(`
       INSERT INTO documents (
         id, name, original_name, mime_type, extension, size, sha256, status,
-        page_count, chunk_count, error, stored_path, created_at, updated_at
+        page_count, chunk_count, extraction_method, ocr_page_count, error,
+        stored_path, created_at, updated_at
       ) VALUES (
         @id, @name, @originalName, @mimeType, @extension, @size, @sha256, @status,
-        @pageCount, @chunkCount, @error, @storedPath, @createdAt, @updatedAt
+        @pageCount, @chunkCount, @extractionMethod, @ocrPageCount, @error,
+        @storedPath, @createdAt, @updatedAt
       )
     `)
     .run(input);
@@ -217,14 +263,29 @@ export function markKnowledgeDocumentReady(
   id: string,
   pageCount: number | null,
   chunkCount: number,
+  extractionMethod: ExtractionMethod,
+  ocrPageCount: number,
 ) {
   getKnowledgeDb()
     .prepare(`
       UPDATE documents
-      SET status = 'ready', page_count = ?, chunk_count = ?, error = NULL, updated_at = ?
+      SET status = 'ready',
+          page_count = ?,
+          chunk_count = ?,
+          extraction_method = ?,
+          ocr_page_count = ?,
+          error = NULL,
+          updated_at = ?
       WHERE id = ?
     `)
-    .run(pageCount, chunkCount, new Date().toISOString(), id);
+    .run(
+      pageCount,
+      chunkCount,
+      extractionMethod,
+      ocrPageCount,
+      new Date().toISOString(),
+      id,
+    );
 }
 
 export function markKnowledgeDocumentError(id: string, error: string) {
@@ -243,8 +304,9 @@ export function replaceKnowledgeChunks(documentId: string, chunks: ChunkInsert[]
   const removeChunks = database.prepare("DELETE FROM chunks WHERE document_id = ?");
   const insertChunk = database.prepare(`
     INSERT INTO chunks (
-      id, document_id, chunk_index, text, token_count, page_start, page_end, embedding
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      id, document_id, chunk_index, text, token_count, page_start, page_end,
+      embedding, extraction_method, ocr_confidence
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertFts = database.prepare(
     "INSERT INTO chunks_fts (chunk_id, document_id, text) VALUES (?, ?, ?)",
@@ -264,6 +326,8 @@ export function replaceKnowledgeChunks(documentId: string, chunks: ChunkInsert[]
         chunk.pageStart,
         chunk.pageEnd,
         JSON.stringify(chunk.embedding),
+        chunk.extractionMethod,
+        chunk.ocrConfidence,
       );
       insertFts.run(chunk.id, chunk.documentId, chunk.text);
     }
@@ -327,23 +391,29 @@ export function setAgentDocumentIds(agentId: string, documentIds: string[]) {
   return validIds;
 }
 
+const chunkSelect = `
+  SELECT
+    c.id,
+    c.document_id,
+    d.name AS document_name,
+    c.chunk_index,
+    c.text,
+    c.token_count,
+    c.page_start,
+    c.page_end,
+    c.embedding,
+    c.extraction_method,
+    c.ocr_confidence
+  FROM chunks c
+  JOIN documents d ON d.id = c.document_id
+`;
+
 export function getChunksForDocuments(documentIds: string[]): StoredChunk[] {
   if (!documentIds.length) return [];
   const placeholders = documentIds.map(() => "?").join(",");
   const rows = getKnowledgeDb()
     .prepare(`
-      SELECT
-        c.id,
-        c.document_id,
-        d.name AS document_name,
-        c.chunk_index,
-        c.text,
-        c.token_count,
-        c.page_start,
-        c.page_end,
-        c.embedding
-      FROM chunks c
-      JOIN documents d ON d.id = c.document_id
+      ${chunkSelect}
       WHERE d.status = 'ready' AND c.document_id IN (${placeholders})
     `)
     .all(...documentIds) as ChunkRow[];
@@ -384,6 +454,8 @@ export function searchKnowledgeFts(
           c.page_start,
           c.page_end,
           c.embedding,
+          c.extraction_method,
+          c.ocr_confidence,
           bm25(chunks_fts) AS rank
         FROM chunks_fts
         JOIN chunks c ON c.id = chunks_fts.chunk_id

@@ -2,7 +2,16 @@
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import type { Agent, BusinessProfile, ChatMessage, KnowledgeDocument } from "@/lib/types";
+
+const PdfSourceViewer = dynamic(
+  () =>
+    import("@/components/pdf-source-viewer").then(
+      (module) => module.PdfSourceViewer,
+    ),
+  { ssr: false },
+);
 
 type View = "overview" | "business" | "knowledge" | "agents";
 
@@ -94,6 +103,12 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [viewer, setViewer] = useState<{
+    documentId: string;
+    documentName: string;
+    page: number | null;
+  } | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -124,6 +139,10 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   }, [business]);
 
   const profilePercent = Math.round((completedFields / 8) * 100);
+  const latestDebug = useMemo(
+    () => [...chat].reverse().find((item) => item.debug)?.debug,
+    [chat],
+  );
 
   function flash(text: string) {
     setNotice(text);
@@ -352,6 +371,21 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     setPlaygroundAgent(agent);
     setChat([]);
     setMessage("");
+    setDebugOpen(false);
+  }
+
+  function openSource(documentId: string, documentName: string, page: number | null) {
+    const document = documents.find((item) => item.id === documentId);
+    if (!document || document.extension !== ".pdf") {
+      flash("PDF görüntüleyici yalnızca PDF kaynaklarında kullanılabilir.");
+      return;
+    }
+
+    setViewer({
+      documentId,
+      documentName: document.originalName || documentName,
+      page,
+    });
   }
 
   async function sendMessage(event: FormEvent) {
@@ -376,7 +410,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Yanıt alınamadı.");
-      setChat((current) => [...current, { role: "assistant", content: data.reply, sources: Array.isArray(data.sources) ? data.sources : [] }]);
+      setChat((current) => [...current, { role: "assistant", content: data.reply, sources: Array.isArray(data.sources) ? data.sources : [], debug: data.debug }]);
     } catch (error) {
       setChat((current) => [
         ...current,
@@ -688,10 +722,29 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                           <span>{formatBytes(document.size)}</span>
                           {document.pageCount && <span>{document.pageCount} sayfa</span>}
                           <span>{document.chunkCount} parça</span>
+                          {document.extractionMethod === "ocr" && (
+                            <span>OCR · {document.ocrPageCount} sayfa</span>
+                          )}
+                          {document.extractionMethod === "mixed" && (
+                            <span>Native + OCR · {document.ocrPageCount} sayfa OCR</span>
+                          )}
+                          {document.extractionMethod === "native" && (
+                            <span>Native text</span>
+                          )}
                         </div>
                         {document.error && <p className="document-error">{document.error}</p>}
                       </div>
                       <div className="document-actions">
+                        {document.extension === ".pdf" && document.status === "ready" && (
+                          <button
+                            className="document-view-button"
+                            onClick={() =>
+                              openSource(document.id, document.originalName, 1)
+                            }
+                          >
+                            Görüntüle
+                          </button>
+                        )}
                         <button
                           className="icon-button"
                           onClick={() => void reindexKnowledgeDocument(document)}
@@ -864,8 +917,94 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 <span className="eyebrow">PLAYGROUND</span>
                 <h3>{playgroundAgent.name}</h3>
               </div>
+              {latestDebug && (
+                <button
+                  className={`debug-toggle ${debugOpen ? "active" : ""}`}
+                  onClick={() => setDebugOpen((value) => !value)}
+                >
+                  RAG Debug
+                </button>
+              )}
               <button className="close-button" onClick={() => setPlaygroundAgent(null)}>×</button>
             </header>
+            {debugOpen && latestDebug && (
+              <aside className="rag-debug-panel">
+                <div className="rag-debug-head">
+                  <div>
+                    <span className="eyebrow accent">RETRIEVAL TRACE</span>
+                    <strong>RAG Debug</strong>
+                  </div>
+                  <button className="close-button" onClick={() => setDebugOpen(false)}>×</button>
+                </div>
+                <div className="rag-debug-body">
+                  <div className="debug-query">
+                    <span>Sorgu</span>
+                    <strong>{latestDebug.query}</strong>
+                  </div>
+                  <div className="debug-stats">
+                    <div><span>Belge</span><strong>{latestDebug.assignedDocumentCount}</strong></div>
+                    <div><span>Chunk</span><strong>{latestDebug.indexedChunkCount}</strong></div>
+                    <div><span>Seçilen token</span><strong>{latestDebug.selectedTokenCount}</strong></div>
+                    <div><span>Toplam süre</span><strong>{latestDebug.timings.totalMs} ms</strong></div>
+                  </div>
+                  <div className="debug-timing">
+                    Embedding {latestDebug.timings.embeddingMs} ms · retrieval {latestDebug.timings.retrievalMs} ms
+                  </div>
+                  <div className="debug-section">
+                    <div className="debug-section-title">
+                      <strong>Final seçim</strong>
+                      <span>{latestDebug.selectedCandidates.length} chunk</span>
+                    </div>
+                    {latestDebug.selectedCandidates.length === 0 ? (
+                      <p className="debug-empty">Bu sorgu için kaynak seçilmedi.</p>
+                    ) : (
+                      <div className="debug-candidates">
+                        {latestDebug.selectedCandidates.map((candidate, index) => (
+                          <button
+                            key={candidate.chunkId}
+                            onClick={() =>
+                              openSource(
+                                candidate.documentId,
+                                candidate.documentName,
+                                candidate.pageStart,
+                              )
+                            }
+                          >
+                            <span className="debug-rank">#{index + 1}</span>
+                            <span className="debug-candidate-main">
+                              <strong>
+                                {candidate.documentName}
+                                {candidate.pageStart ? ` · s.${candidate.pageStart}` : ""}
+                              </strong>
+                              <small>
+                                {candidate.semanticScore !== undefined
+                                  ? `semantic ${candidate.semanticScore.toFixed(3)} · `
+                                  : ""}
+                                {candidate.keywordRank
+                                  ? `keyword #${candidate.keywordRank} · `
+                                  : ""}
+                                final {candidate.finalScore?.toFixed(4) || "—"}
+                              </small>
+                              {candidate.extractionMethod === "ocr" && (
+                                <small>
+                                  OCR
+                                  {candidate.ocrConfidence !== null
+                                    ? ` · güven %${candidate.ocrConfidence}`
+                                    : ""}
+                                </small>
+                              )}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="debug-foot">
+                    Semantic aday: {latestDebug.semanticCandidates.length} · keyword aday: {latestDebug.keywordCandidates.length}
+                  </div>
+                </div>
+              </aside>
+            )}
             <div className="chat-body">
               {chat.length === 0 ? (
                 <div className="chat-empty">
@@ -890,10 +1029,25 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                             <strong>Kaynaklar</strong>
                             <div>
                               {item.sources.map((source, sourceIndex) => (
-                                <span className="source-chip" key={`${source.documentId}-${source.pageStart}-${sourceIndex}`}>
+                                <button
+                                  className="source-chip"
+                                  key={`${source.documentId}-${source.pageStart}-${sourceIndex}`}
+                                  onClick={() =>
+                                    openSource(
+                                      source.documentId,
+                                      source.documentName,
+                                      source.pageStart,
+                                    )
+                                  }
+                                >
                                   {source.documentName}
                                   {source.pageStart ? ` · s.${source.pageStart}` : ""}
-                                </span>
+                                  {source.extractionMethod === "ocr" ? " · OCR" : ""}
+                                  {source.ocrConfidence !== null &&
+                                  source.ocrConfidence !== undefined
+                                    ? ` %${source.ocrConfidence}`
+                                    : ""}
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -911,6 +1065,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
             </form>
           </section>
         </div>
+      )}
+
+      {viewer && (
+        <PdfSourceViewer
+          documentId={viewer.documentId}
+          documentName={viewer.documentName}
+          initialPage={viewer.page}
+          onClose={() => setViewer(null)}
+        />
       )}
 
       {notice && <div className="toast"><Icon name="check" size={16} /> {notice}</div>}
