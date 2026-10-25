@@ -1801,6 +1801,36 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 
 
+/* Agent drawer readability */
+.drawer-head h2 {
+  font-size: 25px;
+}
+.drawer .field > span {
+  font-size: 14px;
+}
+.drawer .field input,
+.drawer .field textarea,
+.drawer .field select {
+  font-size: 14.5px;
+}
+.drawer .knowledge-option {
+  min-height: 54px;
+  padding: 11px 12px;
+}
+.drawer .knowledge-option > span:last-child strong {
+  font-size: 13px;
+}
+.drawer .knowledge-option > span:last-child small {
+  margin-top: 4px;
+  font-size: 11px;
+}
+.drawer .context-note strong {
+  font-size: 13.5px;
+}
+.drawer .context-note span {
+  font-size: 12px;
+}
+
 /* Tools UI readability pass */
 .drawer {
   width: min(640px, 100vw);
