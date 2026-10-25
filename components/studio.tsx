@@ -1138,7 +1138,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 <div>
                   <strong>Tools Foundation hazır · execution henüz chat'e bağlı değil</strong>
                   <span>
-                    Bu sayfada katalog ve ajan izinlarını hazırlayabilirsin. Gerçek
+                    Bu sayfada katalog ve ajan izinlerini hazırlayabilirsin. Gerçek
                     <code> lookup_order </code>
                     çalıştırması bir sonraki aşamada bağlanacak.
                   </span>
