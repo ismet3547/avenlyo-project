@@ -124,7 +124,7 @@ Chat tarafında her istekte tüm geçmiş yerine son 12 mesaj kullanılır. Resp
 
 ## Tools / Actions Foundation
 
-Tools V1 altyapısı güvenli varsayılanlarla hazırlanmıştır; bu aşamada chat henüz tool çağırmaz ve gerçek side-effect executor'ları bağlı değildir.
+Tools V1 altyapısı güvenli varsayılanlarla çalışır. İlk read-only executor olan `lookup_order`, OpenAI Responses function calling ile Playground'a bağlanmıştır. Write tool'lar henüz çalıştırılmaz.
 
 Yerel SQLite içinde şu tablolar bulunur:
 
@@ -137,10 +137,41 @@ Yerel SQLite içinde şu tablolar bulunur:
 
 İlk registry tanımları:
 
-- `lookup_order`: read-only, onay gerektirmez
-- `create_crm_contact`: write, kullanıcı onayı gerektirir
+- `lookup_order`: read-only, onay gerektirmez, local demo executor hazır
+- `create_crm_contact`: write, kullanıcı onayı gerektirir, executor henüz bağlı değildir
 
-Bu araçlar henüz çalıştırılmaz; executor ve Responses function-call loop sonraki aşamada eklenecektir.
+`lookup_order` akışı:
+
+```text
+Kullanıcı
+→ Responses API
+→ function_call: lookup_order
+→ Agent permission + policy + Zod validation
+→ local read-only executor
+→ function_call_output
+→ Responses API continuation
+→ streaming final cevap
+```
+
+Tool call sonucu, run/attempt/audit metadata ile yerel SQLite'a kaydedilir. Chat içinde Tool Activity kartı görünür ve sohbet geçmişiyle birlikte kalıcıdır.
+
+### lookup_order test verisi
+
+Local demo executor şu siparişleri içerir:
+
+- `ORD-4582` → Kargoya verildi · Transfer merkezinde
+- `ORD-9041` → Hazırlanıyor · Paketleme aşamasında
+- `ORD-1207` → Teslim edildi
+
+Tool execution'ı test etmek için `.env.local` içinde:
+
+```env
+AVENLYO_TOOLS_ENABLED=true
+AVENLYO_TOOL_READS_ENABLED=true
+AVENLYO_TOOL_WRITES_ENABLED=false
+```
+
+ayarlayın, dev server'ı yeniden başlatın, ardından **Ajanlar → Ajanı düzenle → Sipariş sorgula** aracını seçin. Playground'da örneğin `ORD-4582 siparişim nerede?` sorun.
 
 Foundation API'leri:
 
@@ -161,13 +192,13 @@ AVENLYO_TOOL_DESTRUCTIVE_ENABLED=false
 AVENLYO_TOOL_DRY_RUN=true
 ```
 
-Bu sayede sonraki executor entegrasyonunda model tool önerebilse bile Avenlyo'nun local policy katmanı izin vermeden işlem gerçekleştirilemez.
+Bu sayede model bir tool çağrısı üretse bile Avenlyo'nun local policy katmanı izin vermeden execution gerçekleşmez. Read-only `lookup_order` için master anahtar ayrıca açık olmalıdır; write/destructive işlemler varsayılan olarak kapalı kalır.
 
 ## Mimari
 
 - **Next.js App Router + TypeScript**
 - **Server Route Handlers**: business, agents, knowledge ve chat API'leri
-- **OpenAI Responses API**: SSE tabanlı streaming cevap üretimi (`response.output_text.delta`)
+- **OpenAI Responses API**: SSE tabanlı streaming cevap üretimi ve strict function calling
 - **React Markdown + GFM**: güvenli Markdown, tablo, liste ve kod render'ı
 - **SQLite chat store**: ajan bazlı konuşma ve mesaj geçmişi
 - **OpenAI Embeddings API**: doküman ve sorgu embedding'leri
@@ -181,7 +212,7 @@ Bu sayede sonraki executor entegrasyonunda model tool önerebilse bile Avenlyo'n
 - **Mammoth**: DOCX metin çıkarma
 - **js-tiktoken**: token tabanlı chunking
 - **Local JSON Store**: işletme profili ve ajan ayarları
-- **Tools Foundation**: Zod tabanlı strict tool registry, ajan-tool izinleri, policy engine ve yerel audit tabloları
+- **Tools Runtime**: Zod tabanlı strict tool registry, ajan-tool izinleri, policy engine, read-only local executor, tool run/audit ve Responses function-call loop
 
 Çalışma anında oluşturulan `data/avenlyo.json`, `data/knowledge.db` ve `data/uploads/` Git'e eklenmez.
 

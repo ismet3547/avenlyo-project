@@ -44,6 +44,7 @@ export type ToolCatalogItem = {
   outputSchema: Record<string, unknown> | null;
   enabled: boolean;
   builtin: boolean;
+  executionReady: boolean;
 };
 
 export type ToolFeatureFlags = {

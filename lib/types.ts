@@ -92,6 +92,19 @@ export type RagDebugTrace = {
   };
 };
 
+export type ToolActivity = {
+  id: string;
+  toolRunId?: string;
+  toolName: string;
+  displayName: string;
+  status: "running" | "success" | "failed" | "blocked";
+  summary: string;
+  arguments?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: string;
+  durationMs?: number;
+};
+
 export type ChatMessage = {
   id?: string;
   conversationId?: string;
@@ -99,6 +112,7 @@ export type ChatMessage = {
   content: string;
   sources?: KnowledgeSource[];
   debug?: RagDebugTrace;
+  toolActivities?: ToolActivity[];
   createdAt?: string;
   streaming?: boolean;
 };

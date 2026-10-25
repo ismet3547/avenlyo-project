@@ -281,3 +281,81 @@ export function getToolRun(id: string): ToolRunRecord | null {
     .get(id) as ToolRunRow | undefined;
   return row ? mapRun(row) : null;
 }
+
+
+export function markToolRunRunning(id: string) {
+  const now = new Date().toISOString();
+  getKnowledgeDb()
+    .prepare(
+      `UPDATE tool_runs
+       SET status = 'running',
+           attempt_count = attempt_count + 1,
+           started_at = COALESCE(started_at, ?)
+       WHERE id = ?`,
+    )
+    .run(now, id);
+  return getToolRun(id);
+}
+
+export function completeToolRun(id: string, result: unknown) {
+  const now = new Date().toISOString();
+  getKnowledgeDb()
+    .prepare(
+      `UPDATE tool_runs
+       SET status = 'success',
+           result_json = ?,
+           error_code = NULL,
+           completed_at = ?
+       WHERE id = ?`,
+    )
+    .run(canonicalJson(result), now, id);
+  return getToolRun(id);
+}
+
+export function failToolRun(id: string, errorCode: string, result?: unknown) {
+  const now = new Date().toISOString();
+  getKnowledgeDb()
+    .prepare(
+      `UPDATE tool_runs
+       SET status = 'failed',
+           result_json = ?,
+           error_code = ?,
+           completed_at = ?
+       WHERE id = ?`,
+    )
+    .run(result === undefined ? null : canonicalJson(result), errorCode, now, id);
+  return getToolRun(id);
+}
+
+export function recordToolRunAttempt(input: {
+  toolRunId: string;
+  attemptNumber: number;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  outcome: "success" | "failed";
+  errorCode?: string | null;
+}) {
+  getKnowledgeDb()
+    .prepare(
+      `INSERT INTO tool_run_attempts (
+        id, tool_run_id, attempt_number, started_at, completed_at,
+        duration_ms, http_status, outcome, error_code
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+      ON CONFLICT(tool_run_id, attempt_number) DO UPDATE SET
+        completed_at = excluded.completed_at,
+        duration_ms = excluded.duration_ms,
+        outcome = excluded.outcome,
+        error_code = excluded.error_code`,
+    )
+    .run(
+      randomUUID(),
+      input.toolRunId,
+      input.attemptNumber,
+      input.startedAt,
+      input.completedAt,
+      input.durationMs,
+      input.outcome,
+      input.errorCode ?? null,
+    );
+}

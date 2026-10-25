@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { TextSourceViewer } from "@/components/text-source-viewer";
-import type { Agent, BusinessProfile, ChatMessage, Conversation, KnowledgeDocument } from "@/lib/types";
+import type { Agent, BusinessProfile, ChatMessage, Conversation, KnowledgeDocument, ToolActivity } from "@/lib/types";
 import type { ToolCatalogItem, ToolFeatureFlags } from "@/lib/tools/types";
 
 const PdfSourceViewer = dynamic(
@@ -44,6 +44,70 @@ const models = [
   { value: "gpt-6.1-sol", label: "GPT-6.1 Sol", hint: "Dengeli · güçlü" },
   { value: "gpt-6-astra", label: "GPT-6 Astra", hint: "En yüksek kalite" },
 ];
+
+
+function ToolActivityCard({ activity }: { activity: ToolActivity }) {
+  const orderId =
+    typeof activity.arguments?.order_id === "string"
+      ? activity.arguments.order_id
+      : null;
+  const status =
+    typeof activity.result?.status === "string"
+      ? activity.result.status
+      : null;
+  const tracking =
+    typeof activity.result?.tracking_status === "string"
+      ? activity.result.tracking_status
+      : null;
+
+  const statusLabel =
+    activity.status === "running"
+      ? "Çalışıyor"
+      : activity.status === "success"
+        ? "Tamamlandı"
+        : activity.status === "blocked"
+          ? "Engellendi"
+          : "Hata";
+
+  return (
+    <div className={`tool-activity-card status-${activity.status}`}>
+      <div className="tool-activity-icon">
+        <Icon name="tools" size={16} />
+      </div>
+      <div className="tool-activity-main">
+        <div className="tool-activity-head">
+          <strong>{activity.displayName}</strong>
+          <span>{statusLabel}</span>
+        </div>
+        <p>{activity.summary}</p>
+
+        {activity.toolName === "lookup_order" && orderId && (
+          <div className="tool-activity-details">
+            <span>
+              <small>Sipariş</small>
+              <strong>{orderId}</strong>
+            </span>
+            {status && (
+              <span>
+                <small>Durum</small>
+                <strong>{status}</strong>
+              </span>
+            )}
+            {tracking && (
+              <span>
+                <small>Takip</small>
+                <strong>{tracking}</strong>
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+      {typeof activity.durationMs === "number" && (
+        <span className="tool-activity-duration">{activity.durationMs} ms</span>
+      )}
+    </div>
+  );
+}
 
 function Icon({
   name,
@@ -656,8 +720,9 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
           if (!line) continue;
 
           const event = JSON.parse(line) as {
-            type: "meta" | "delta" | "done" | "error";
+            type: "meta" | "delta" | "tool" | "done" | "error";
             delta?: string;
+            activity?: ToolActivity;
             error?: string;
             conversation?: Conversation;
             userMessage?: ChatMessage;
@@ -699,6 +764,30 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   ? { ...item, content: item.content + event.delta }
                   : item,
               ),
+            );
+          } else if (event.type === "tool" && event.activity) {
+            setChat((current) =>
+              current.map((item) => {
+                if (item.id !== tempAssistantId) return item;
+
+                const activities = item.toolActivities || [];
+                const existingIndex = activities.findIndex(
+                  (activity) => activity.id === event.activity!.id,
+                );
+                const nextActivities =
+                  existingIndex === -1
+                    ? [...activities, event.activity!]
+                    : activities.map((activity, activityIndex) =>
+                        activityIndex === existingIndex
+                          ? event.activity!
+                          : activity,
+                      );
+
+                return {
+                  ...item,
+                  toolActivities: nextActivities,
+                };
+              }),
             );
           } else if (event.type === "done" && event.message) {
             setChat((current) =>
@@ -1136,11 +1225,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
               <div className="tools-foundation-banner">
                 <div className="tools-foundation-icon"><Icon name="tools" /></div>
                 <div>
-                  <strong>Tools Foundation hazır · execution henüz chat'e bağlı değil</strong>
+                  <strong>
+                    {toolFlags?.toolsEnabled
+                      ? "Read-only tool execution hazır"
+                      : "Tools hazır · master anahtarı kapalı"}
+                  </strong>
                   <span>
-                    Bu sayfada katalog ve ajan izinlerini hazırlayabilirsin. Gerçek
-                    <code> lookup_order </code>
-                    çalıştırması bir sonraki aşamada bağlanacak.
+                    <code>lookup_order</code> artık Playground içinde çalışabilir.
+                    Aracı ajana ata. Master kapalıysa <code>AVENLYO_TOOLS_ENABLED=true</code>
+                    yapıp sunucuyu yeniden başlat. Write araçları bu aşamada hâlâ çalıştırılmaz.
                   </span>
                 </div>
                 <span className={`tools-master-state ${toolFlags?.toolsEnabled ? "on" : "off"}`}>
@@ -1223,7 +1316,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                                 ? "Master tool anahtarı kapalı"
                                 : "Policy katmanı hazır"}
                           </span>
-                          <span>Built-in</span>
+                          <span>{tool.executionReady ? "Execution hazır" : "Yakında"}</span>
                         </div>
                       </article>
                     );
@@ -1390,7 +1483,8 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   <div className="tool-permission-options">
                     {toolsCatalog.map((tool) => {
                       const checked = agentToolIds.includes(tool.id);
-                      const unavailable = !tool.enabled;
+                      const unavailable =
+                        !tool.enabled || (!tool.executionReady && !checked);
 
                       return (
                         <button
@@ -1418,8 +1512,12 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                               {toolRiskLabel(tool.riskLevel)} · {toolApprovalLabel(tool.approvalPolicy)}
                             </small>
                           </span>
-                          <span className={`tool-permission-state ${tool.enabled ? "active" : ""}`}>
-                            {tool.enabled ? "Katalog aktif" : "Araç kapalı"}
+                          <span className={`tool-permission-state ${tool.enabled && tool.executionReady ? "active" : ""}`}>
+                            {!tool.executionReady
+                              ? "Yakında"
+                              : tool.enabled
+                                ? "Execution hazır"
+                                : "Araç kapalı"}
                           </span>
                         </button>
                       );
@@ -1432,7 +1530,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 )}
 
                 <div className="tool-picker-note">
-                  Bu seçim yalnız izinleri kaydeder. Tool execution henüz chat'e bağlanmadı.
+                  Seçilen read-only araçlar, Tools master anahtarı açıksa Playground içinde kullanılabilir.
                 </div>
               </div>
 
@@ -1704,6 +1802,19 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                             </span>
 
                             <div className="message-content">
+                              {item.role === "assistant" &&
+                                item.toolActivities &&
+                                item.toolActivities.length > 0 && (
+                                  <div className="tool-activity-list">
+                                    {item.toolActivities.map((activity) => (
+                                      <ToolActivityCard
+                                        key={activity.id}
+                                        activity={activity}
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+
                               {item.role === "assistant" ? (
                                 item.content ? (
                                   <MarkdownMessage content={item.content} />

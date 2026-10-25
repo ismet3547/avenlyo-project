@@ -46,7 +46,7 @@ const definitions: ToolDefinition[] = [
     inputSchema: lookupOrderInput,
     outputSchema: lookupOrderOutput,
     config: {
-      executor: "planned",
+      executor: "local",
       resultAllowlist: ["order_id", "status", "tracking_status"],
     },
   },
@@ -97,5 +97,6 @@ export function toCatalogItem(
       : null,
     enabled: state.enabled ?? true,
     builtin: state.builtin ?? true,
+    executionReady: definition.config.executor !== "planned",
   };
 }
