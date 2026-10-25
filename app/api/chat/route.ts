@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { readData } from "@/lib/store";
+import {
+  contextFromRetrieved,
+  retrieveKnowledgeForAgent,
+  sourcesFromRetrieved,
+} from "@/lib/rag/retrieve";
 import type { ChatMessage } from "@/lib/types";
+
+export const runtime = "nodejs";
 
 function businessContext(business: Awaited<ReturnType<typeof readData>>["business"]) {
   return [
@@ -86,15 +93,20 @@ export async function POST(request: Request) {
         .slice(-8)
     : [];
 
+  const retrieved = await retrieveKnowledgeForAgent(agent.id, message);
+  const ragContext = contextFromRetrieved(retrieved);
+  const business = businessContext(data.business);
+
   const instructions = [
     `Sen "${agent.name}" adlı bir yapay zeka ajanısın.`,
     agent.role && `Rolün: ${agent.role}`,
     agent.goal && `Ana hedefin: ${agent.goal}`,
     agent.instructions && `Özel talimatlar:\n${agent.instructions}`,
-    "Yalnızca sağlanan işletme bilgilerine dayan. Bilgi eksikse bunu dürüstçe belirt.",
     "Yanıt dilini kullanıcının diline uyarla.",
-    businessContext(data.business) &&
-      `\nİŞLETME BAĞLAMI\n${businessContext(data.business)}`,
+    "Sağlanan işletme bağlamını ve bilgi tabanı kaynaklarını temel al. Bu kaynaklarda bulunmayan özel işletme bilgilerini uydurma.",
+    "Bilgi tabanı parçaları arasında çelişki varsa bunu açıkça belirt. Yeterli bilgi yoksa eksik olduğunu dürüstçe söyle.",
+    business && `\nİŞLETME BAĞLAMI\n${business}`,
+    ragContext && `\nBİLGİ TABANI BAĞLAMI\n${ragContext}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -116,6 +128,7 @@ export async function POST(request: Request) {
         { role: "user", content: message },
       ],
     }),
+    signal: AbortSignal.timeout(90_000),
   });
 
   const payload = (await response.json()) as Record<string, unknown>;
@@ -141,5 +154,8 @@ export async function POST(request: Request) {
     );
   }
 
-  return NextResponse.json({ reply });
+  return NextResponse.json({
+    reply,
+    sources: sourcesFromRetrieved(retrieved),
+  });
 }
