@@ -584,12 +584,9 @@ export async function POST(request: Request) {
             throw new Error("Approval continuation yeni tool çağrısı üretemez.");
           }
         } catch (modelError) {
-          assistantText =
-            decision === "rejected"
-              ? "İşlem reddedildi; herhangi bir CRM kaydı oluşturulmadı."
-              : flags.dryRun
-                ? "Onaylanan işlem dry-run modunda tamamlandı; gerçek CRM kaydı oluşturulmadı."
-                : "Onaylanan CRM işlemi tamamlandı.";
+          assistantText = flags.dryRun
+            ? "Onaylanan işlem dry-run modunda tamamlandı; gerçek CRM kaydı oluşturulmadı."
+            : "Onaylanan CRM işlemi tamamlandı.";
           push({ type: "delta", delta: assistantText });
 
           appendToolAuditEvent({
