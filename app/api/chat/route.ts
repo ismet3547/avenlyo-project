@@ -93,7 +93,8 @@ export async function POST(request: Request) {
         .slice(-8)
     : [];
 
-  const retrieved = await retrieveKnowledgeForAgent(agent.id, message);
+  const retrieval = await retrieveKnowledgeForAgent(agent.id, message);
+  const retrieved = retrieval.items;
   const ragContext = contextFromRetrieved(retrieved);
   const business = businessContext(data.business);
 
@@ -154,8 +155,11 @@ export async function POST(request: Request) {
     );
   }
 
+  const debugEnabled = process.env.AVENLYO_RAG_DEBUG === "true";
+
   return NextResponse.json({
     reply,
     sources: sourcesFromRetrieved(retrieved),
+    ...(debugEnabled && { debug: retrieval.debug }),
   });
 }
