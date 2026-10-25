@@ -246,3 +246,34 @@ export function titleFromText(text: string) {
   if (!compact) return "Yeni sohbet";
   return compact.length > 54 ? `${compact.slice(0, 54).trim()}…` : compact;
 }
+
+
+export function getConversationMessage(id: string): ChatMessage | null {
+  const row = db()
+    .prepare("SELECT * FROM chat_messages WHERE id = ?")
+    .get(id) as MessageRow | undefined;
+  return row ? mapMessage(row) : null;
+}
+
+export function updateConversationMessage(input: {
+  id: string;
+  content: string;
+  toolActivities?: ToolActivity[];
+}): ChatMessage | null {
+  const existing = getConversationMessage(input.id);
+  if (!existing) return null;
+
+  db()
+    .prepare(
+      `UPDATE chat_messages
+       SET content = ?, tool_activities_json = ?
+       WHERE id = ? AND role = 'assistant'`,
+    )
+    .run(
+      input.content,
+      input.toolActivities ? JSON.stringify(input.toolActivities) : null,
+      input.id,
+    );
+
+  return getConversationMessage(input.id);
+}

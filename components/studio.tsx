@@ -46,7 +46,15 @@ const models = [
 ];
 
 
-function ToolActivityCard({ activity }: { activity: ToolActivity }) {
+function ToolActivityCard({
+  activity,
+  onDecision,
+  busy,
+}: {
+  activity: ToolActivity;
+  onDecision?: (activity: ToolActivity, decision: "approve" | "reject") => void;
+  busy?: boolean;
+}) {
   const orderId =
     typeof activity.arguments?.order_id === "string"
       ? activity.arguments.order_id
@@ -60,14 +68,41 @@ function ToolActivityCard({ activity }: { activity: ToolActivity }) {
       ? activity.result.tracking_status
       : null;
 
+  const crmName =
+    typeof activity.arguments?.name === "string"
+      ? activity.arguments.name
+      : null;
+  const crmEmail =
+    typeof activity.arguments?.email === "string"
+      ? activity.arguments.email
+      : null;
+  const crmPhone =
+    typeof activity.arguments?.phone === "string"
+      ? activity.arguments.phone
+      : null;
+  const crmNotes =
+    typeof activity.arguments?.notes === "string"
+      ? activity.arguments.notes
+      : null;
+  const contactId =
+    typeof activity.result?.contact_id === "string"
+      ? activity.result.contact_id
+      : null;
+
   const statusLabel =
     activity.status === "running"
       ? "Çalışıyor"
       : activity.status === "success"
         ? "Tamamlandı"
-        : activity.status === "blocked"
-          ? "Engellendi"
-          : "Hata";
+        : activity.status === "approval_required"
+          ? "Onay bekliyor"
+          : activity.status === "approved"
+            ? "Onaylandı"
+            : activity.status === "rejected"
+              ? "Reddedildi"
+              : activity.status === "blocked"
+                ? "Engellendi"
+                : "Hata";
 
   return (
     <div className={`tool-activity-card status-${activity.status}`}>
@@ -101,6 +136,67 @@ function ToolActivityCard({ activity }: { activity: ToolActivity }) {
             )}
           </div>
         )}
+
+        {activity.toolName === "create_crm_contact" && (
+          <>
+            <div className="tool-activity-details crm-approval-details">
+              {crmName && (
+                <span>
+                  <small>Müşteri</small>
+                  <strong>{crmName}</strong>
+                </span>
+              )}
+              {crmEmail && (
+                <span>
+                  <small>E-posta</small>
+                  <strong>{crmEmail}</strong>
+                </span>
+              )}
+              {crmPhone && (
+                <span>
+                  <small>Telefon</small>
+                  <strong>{crmPhone}</strong>
+                </span>
+              )}
+              {contactId && (
+                <span>
+                  <small>CRM ID</small>
+                  <strong>{contactId}</strong>
+                </span>
+              )}
+            </div>
+
+            {crmNotes && (
+              <div className="tool-approval-notes">
+                <small>Not</small>
+                <p>{crmNotes}</p>
+              </div>
+            )}
+
+            {activity.status === "approval_required" &&
+              activity.toolRunId &&
+              onDecision && (
+                <div className="tool-approval-actions">
+                  <button
+                    type="button"
+                    className="approval-reject"
+                    disabled={busy}
+                    onClick={() => onDecision(activity, "reject")}
+                  >
+                    Reddet
+                  </button>
+                  <button
+                    type="button"
+                    className="approval-approve"
+                    disabled={busy}
+                    onClick={() => onDecision(activity, "approve")}
+                  >
+                    {busy ? "İşleniyor…" : "Onayla ve oluştur"}
+                  </button>
+                </div>
+              )}
+          </>
+        )}
       </div>
       {typeof activity.durationMs === "number" && (
         <span className="tool-activity-duration">{activity.durationMs} ms</span>
@@ -108,6 +204,7 @@ function ToolActivityCard({ activity }: { activity: ToolActivity }) {
     </div>
   );
 }
+
 
 function Icon({
   name,
@@ -178,6 +275,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const [conversationLoading, setConversationLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const [viewer, setViewer] = useState<{
     documentId: string;
@@ -226,6 +324,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const profilePercent = Math.round((completedFields / 8) * 100);
   const latestDebug = useMemo(
     () => [...chat].reverse().find((item) => item.debug)?.debug,
+    [chat],
+  );
+  const hasPendingApproval = useMemo(
+    () =>
+      chat.some((item) =>
+        item.toolActivities?.some(
+          (activity) => activity.status === "approval_required",
+        ),
+      ),
     [chat],
   );
 
@@ -832,9 +939,117 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     }
   }
 
+  async function decideToolApproval(
+    activity: ToolActivity,
+    decision: "approve" | "reject",
+  ) {
+    if (!activity.toolRunId || approvalBusyId) return;
+
+    setApprovalBusyId(activity.toolRunId);
+
+    try {
+      const response = await fetch("/api/chat/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          toolRunId: activity.toolRunId,
+          decision,
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Onay kararı uygulanamadı.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      const targetMessage = (item: ChatMessage) =>
+        item.toolActivities?.some(
+          (toolActivity) => toolActivity.id === activity.id,
+        );
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf("\n");
+
+          if (!line) continue;
+
+          const event = JSON.parse(line) as {
+            type: "delta" | "tool" | "done" | "error";
+            delta?: string;
+            activity?: ToolActivity;
+            message?: ChatMessage;
+            conversation?: Conversation;
+            error?: string;
+          };
+
+          if (event.type === "tool" && event.activity) {
+            setChat((current) =>
+              current.map((item) => {
+                if (!targetMessage(item)) return item;
+
+                const activities = item.toolActivities || [];
+                return {
+                  ...item,
+                  toolActivities: activities.map((toolActivity) =>
+                    toolActivity.id === event.activity!.id
+                      ? event.activity!
+                      : toolActivity,
+                  ),
+                };
+              }),
+            );
+          } else if (event.type === "delta" && event.delta) {
+            setChat((current) =>
+              current.map((item) =>
+                targetMessage(item)
+                  ? { ...item, content: item.content + event.delta }
+                  : item,
+              ),
+            );
+          } else if (event.type === "done" && event.message) {
+            setChat((current) =>
+              current.map((item) =>
+                targetMessage(item) || item.id === event.message!.id
+                  ? { ...event.message!, streaming: false }
+                  : item,
+              ),
+            );
+            if (event.conversation) updateConversationList(event.conversation);
+          } else if (event.type === "error") {
+            throw new Error(event.error || "Onaylanan işlem tamamlanamadı.");
+          }
+        }
+      }
+
+      if (playgroundAgent) {
+        await refreshConversations(playgroundAgent.id);
+      }
+    } catch (error) {
+      flash(
+        error instanceof Error
+          ? error.message
+          : "Onay kararı uygulanamadı.",
+      );
+    } finally {
+      setApprovalBusyId(null);
+    }
+  }
+
   function sendMessage(event: FormEvent) {
     event.preventDefault();
-    if (!message.trim()) return;
+    if (!message.trim() || hasPendingApproval || approvalBusyId) return;
     void sendChatMessage(message);
   }
 
@@ -843,7 +1058,12 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   }
 
   function regenerateLastResponse() {
-    if (sending || !activeConversationId) return;
+    if (
+      sending ||
+      approvalBusyId ||
+      hasPendingApproval ||
+      !activeConversationId
+    ) return;
     const lastUser = [...chat].reverse().find((item) => item.role === "user");
     if (!lastUser) return;
     void sendChatMessage(lastUser.content, true);
@@ -1227,13 +1447,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 <div>
                   <strong>
                     {toolFlags?.toolsEnabled
-                      ? "Read-only tool execution hazır"
+                      ? toolFlags.writesEnabled
+                        ? "Read + onaylı write execution hazır"
+                        : "Read-only execution hazır · write kapalı"
                       : "Tools hazır · master anahtarı kapalı"}
                   </strong>
                   <span>
-                    <code>lookup_order</code> artık Playground içinde çalışabilir.
-                    Aracı ajana ata. Master kapalıysa <code>AVENLYO_TOOLS_ENABLED=true</code>
-                    yapıp sunucuyu yeniden başlat. Write araçları bu aşamada hâlâ çalıştırılmaz.
+                    <code>lookup_order</code> doğrudan çalışır. <code>create_crm_contact</code>
+                    ise yalnız write anahtarı açıksa modele verilir ve çalışmadan önce kullanıcı onayı ister.
+                    Dry-run açıksa onay akışı tamamlanır ama gerçek CRM kaydı oluşturulmaz.
                   </span>
                 </div>
                 <span className={`tools-master-state ${toolFlags?.toolsEnabled ? "on" : "off"}`}>
@@ -1530,7 +1752,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 )}
 
                 <div className="tool-picker-note">
-                  Seçilen read-only araçlar, Tools master anahtarı açıksa Playground içinde kullanılabilir.
+                  Seçilen araçlar yalnız global güvenlik anahtarları izin veriyorsa Playground içinde kullanılabilir. Write araçları ayrıca kullanıcı onayı ister.
                 </div>
               </div>
 
@@ -1810,6 +2032,8 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                                       <ToolActivityCard
                                         key={activity.id}
                                         activity={activity}
+                                        busy={approvalBusyId === activity.toolRunId}
+                                        onDecision={decideToolApproval}
                                       />
                                     ))}
                                   </div>
@@ -1818,11 +2042,11 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                               {item.role === "assistant" ? (
                                 item.content ? (
                                   <MarkdownMessage content={item.content} />
-                                ) : (
+                                ) : item.streaming ? (
                                   <p className="typing">
                                     Yanıt hazırlanıyor<span>...</span>
                                   </p>
-                                )
+                                ) : null
                               ) : (
                                 <p>{item.content}</p>
                               )}
@@ -1893,8 +2117,12 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   <input
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
-                    placeholder="Bir mesaj yazın..."
-                    disabled={sending}
+                    placeholder={
+                      hasPendingApproval
+                        ? "Önce bekleyen işlemi onaylayın veya reddedin."
+                        : "Bir mesaj yazın..."
+                    }
+                    disabled={sending || hasPendingApproval || Boolean(approvalBusyId)}
                   />
                   {sending ? (
                     <button
@@ -1907,7 +2135,11 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                     </button>
                   ) : (
                     <button
-                      disabled={!message.trim()}
+                      disabled={
+                        !message.trim() ||
+                        hasPendingApproval ||
+                        Boolean(approvalBusyId)
+                      }
                       aria-label="Gönder"
                     >
                       <Icon name="send" />

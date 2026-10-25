@@ -1,5 +1,6 @@
 import { getToolLimits } from "./config";
 import { lookupOrder } from "./executors/lookup-order";
+import { createCrmContact } from "./executors/create-crm-contact";
 import type { ToolDefinition } from "./types";
 
 export type ToolExecutionResult =
@@ -42,6 +43,8 @@ async function runLocalTool(
   switch (definition.name) {
     case "lookup_order":
       return lookupOrder(args as { order_id: string });
+    case "create_crm_contact":
+      throw new Error("TOOL_EXECUTION_CONTEXT_REQUIRED");
     default:
       throw new Error("TOOL_EXECUTOR_NOT_IMPLEMENTED");
   }
@@ -50,6 +53,8 @@ async function runLocalTool(
 export async function executeRegisteredTool(input: {
   definition: ToolDefinition;
   arguments: unknown;
+  idempotencyKey?: string;
+  dryRun?: boolean;
 }): Promise<ToolExecutionResult> {
   const startedAt = performance.now();
 
@@ -66,10 +71,32 @@ export async function executeRegisteredTool(input: {
     const timeoutMs =
       input.definition.config.timeoutMs ?? getToolLimits().localTimeoutMs;
 
-    const rawResult = await withTimeout(
-      Promise.resolve(runLocalTool(input.definition, input.arguments)),
-      timeoutMs,
-    );
+    const rawResult =
+      input.definition.name === "create_crm_contact"
+        ? input.dryRun
+          ? {
+              contact_id: "DRY-RUN",
+              name: (input.arguments as { name: string }).name,
+              created: false,
+            }
+          : await withTimeout(
+              Promise.resolve(
+                createCrmContact(
+                  input.arguments as {
+                    name: string;
+                    phone: string | null;
+                    email: string | null;
+                    notes: string | null;
+                  },
+                  input.idempotencyKey || "",
+                ),
+              ),
+              timeoutMs,
+            )
+        : await withTimeout(
+            Promise.resolve(runLocalTool(input.definition, input.arguments)),
+            timeoutMs,
+          );
 
     const parsed = input.definition.outputSchema?.safeParse(rawResult);
     if (parsed && !parsed.success) {
@@ -96,7 +123,10 @@ export async function executeRegisteredTool(input: {
         : error instanceof Error &&
             error.message === "TOOL_EXECUTOR_NOT_IMPLEMENTED"
           ? "TOOL_EXECUTOR_NOT_IMPLEMENTED"
-          : "TOOL_EXECUTION_FAILED";
+          : error instanceof Error &&
+              error.message === "TOOL_IDEMPOTENCY_KEY_REQUIRED"
+            ? "TOOL_IDEMPOTENCY_KEY_REQUIRED"
+            : "TOOL_EXECUTION_FAILED";
 
     return {
       ok: false,
@@ -106,7 +136,9 @@ export async function executeRegisteredTool(input: {
           ? "Araç zaman aşımına uğradı."
           : code === "TOOL_EXECUTOR_NOT_IMPLEMENTED"
             ? "Bu araç için executor henüz bağlı değil."
-            : "Araç çalıştırılırken hata oluştu.",
+            : code === "TOOL_IDEMPOTENCY_KEY_REQUIRED"
+              ? "Yazma işlemi için idempotency anahtarı gerekli."
+              : "Araç çalıştırılırken hata oluştu.",
       durationMs: Math.round(performance.now() - startedAt),
     };
   }

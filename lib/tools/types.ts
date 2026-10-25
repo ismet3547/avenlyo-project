@@ -112,3 +112,17 @@ export type ToolRunRecord = {
   completedAt: string | null;
   createdAt: string;
 };
+
+export type ToolApprovalDecision = "pending" | "approved" | "rejected" | "expired";
+
+export type ToolApprovalRecord = {
+  id: string;
+  toolRunId: string;
+  decision: ToolApprovalDecision;
+  argumentsHash: string;
+  resumeItemsJson: string | null;
+  approvedAt: string | null;
+  rejectedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+};

@@ -2,6 +2,7 @@ import { appendToolAuditEvent } from "./audit";
 import { getToolFeatureFlags } from "./config";
 import {
   completeToolRun,
+  createToolApproval,
   createToolRun,
   failToolRun,
   getEnabledAgentToolIds,
@@ -22,10 +23,13 @@ export type ModelFunctionCall = {
 
 export type ToolCallOutcome = {
   activity: ToolActivity;
-  functionOutput: {
+  functionOutput?: {
     type: "function_call_output";
     call_id: string;
     output: string;
+  };
+  approvalRequired?: {
+    toolRunId: string;
   };
 };
 
@@ -133,12 +137,20 @@ export async function handleModelFunctionCall(input: {
       requiresApproval: true,
     });
 
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    createToolApproval({
+      toolRunId: run.id,
+      argumentsHash: run.argumentsHash,
+      expiresAt,
+    });
+
     appendToolAuditEvent({
       toolRunId: run.id,
       eventType: "tool.approval_required",
       metadata: {
         tool: definition.name,
         argumentsHash: run.argumentsHash,
+        expiresAt,
       },
     });
 
@@ -148,19 +160,14 @@ export async function handleModelFunctionCall(input: {
         toolRunId: run.id,
         toolName: definition.name,
         displayName: definition.displayName,
-        status: "blocked",
-        summary: "Bu işlem kullanıcı onayı gerektiriyor.",
+        status: "approval_required",
+        summary: "Bu işlem çalıştırılmadan önce onayınız gerekiyor.",
         arguments: decision.arguments as Record<string, unknown>,
-        error: "APPROVAL_REQUIRED",
+        approvalExpiresAt: expiresAt,
       },
-      functionOutput: output(input.call.callId, {
-        ok: false,
-        error: {
-          code: "APPROVAL_REQUIRED",
-          message: "Bu araç çağrısı kullanıcı onayı gerektiriyor.",
-          tool_run_id: run.id,
-        },
-      }),
+      approvalRequired: {
+        toolRunId: run.id,
+      },
     };
   }
 

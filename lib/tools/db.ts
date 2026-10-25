@@ -8,6 +8,8 @@ import {
 } from "./registry";
 import { toStrictJsonSchema } from "./schemas";
 import type {
+  ToolApprovalDecision,
+  ToolApprovalRecord,
   ToolCatalogItem,
   ToolRiskLevel,
   ToolRunRecord,
@@ -28,6 +30,32 @@ type ToolRow = {
   builtin: number;
   enabled: number;
 };
+
+type ToolApprovalRow = {
+  id: string;
+  tool_run_id: string;
+  decision: ToolApprovalDecision;
+  arguments_hash: string;
+  resume_items_json: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  expires_at: string | null;
+  created_at: string;
+};
+
+function mapApproval(row: ToolApprovalRow): ToolApprovalRecord {
+  return {
+    id: row.id,
+    toolRunId: row.tool_run_id,
+    decision: row.decision,
+    argumentsHash: row.arguments_hash,
+    resumeItemsJson: row.resume_items_json,
+    approvedAt: row.approved_at,
+    rejectedAt: row.rejected_at,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+  };
+}
 
 type ToolRunRow = {
   id: string;
@@ -358,4 +386,148 @@ export function recordToolRunAttempt(input: {
       input.outcome,
       input.errorCode ?? null,
     );
+}
+
+
+export function attachToolRunMessage(toolRunId: string, messageId: string) {
+  getKnowledgeDb()
+    .prepare("UPDATE tool_runs SET message_id = ? WHERE id = ?")
+    .run(messageId, toolRunId);
+  return getToolRun(toolRunId);
+}
+
+export function createToolApproval(input: {
+  toolRunId: string;
+  argumentsHash: string;
+  expiresAt: string;
+  resumeItems?: unknown[];
+}): ToolApprovalRecord {
+  const database = getKnowledgeDb();
+  const existing = getToolApprovalByRunId(input.toolRunId);
+  if (existing) return existing;
+
+  const id = randomUUID();
+  const now = new Date().toISOString();
+
+  database.transaction(() => {
+    database
+      .prepare(
+        `INSERT INTO tool_approvals (
+          id, tool_run_id, decision, arguments_hash, resume_items_json,
+          approved_at, rejected_at, expires_at, created_at
+        ) VALUES (?, ?, 'pending', ?, ?, NULL, NULL, ?, ?)`,
+      )
+      .run(
+        id,
+        input.toolRunId,
+        input.argumentsHash,
+        input.resumeItems ? JSON.stringify(input.resumeItems) : null,
+        input.expiresAt,
+        now,
+      );
+
+    database
+      .prepare("UPDATE tool_runs SET approval_id = ? WHERE id = ?")
+      .run(id, input.toolRunId);
+  })();
+
+  return getToolApprovalByRunId(input.toolRunId)!;
+}
+
+export function saveToolApprovalResumeItems(
+  toolRunId: string,
+  items: unknown[],
+) {
+  getKnowledgeDb()
+    .prepare(
+      "UPDATE tool_approvals SET resume_items_json = ? WHERE tool_run_id = ?",
+    )
+    .run(JSON.stringify(items), toolRunId);
+  return getToolApprovalByRunId(toolRunId);
+}
+
+export function getToolApprovalByRunId(
+  toolRunId: string,
+): ToolApprovalRecord | null {
+  const row = getKnowledgeDb()
+    .prepare("SELECT * FROM tool_approvals WHERE tool_run_id = ?")
+    .get(toolRunId) as ToolApprovalRow | undefined;
+  return row ? mapApproval(row) : null;
+}
+
+export function decideToolApproval(
+  toolRunId: string,
+  decision: "approved" | "rejected",
+): ToolApprovalRecord | null {
+  const database = getKnowledgeDb();
+  const transaction = database.transaction(() => {
+    const current = getToolApprovalByRunId(toolRunId);
+    if (!current) return null;
+    if (current.decision !== "pending") return current;
+
+    const now = new Date();
+    if (current.expiresAt && new Date(current.expiresAt).getTime() <= now.getTime()) {
+      database
+        .prepare(
+          "UPDATE tool_approvals SET decision = 'expired' WHERE tool_run_id = ? AND decision = 'pending'",
+        )
+        .run(toolRunId);
+      database
+        .prepare(
+          "UPDATE tool_runs SET status = 'cancelled', error_code = 'APPROVAL_EXPIRED', completed_at = ? WHERE id = ? AND status = 'approval_required'",
+        )
+        .run(now.toISOString(), toolRunId);
+      return getToolApprovalByRunId(toolRunId);
+    }
+
+    if (decision === "approved") {
+      const changed = database
+        .prepare(
+          "UPDATE tool_approvals SET decision = 'approved', approved_at = ? WHERE tool_run_id = ? AND decision = 'pending'",
+        )
+        .run(now.toISOString(), toolRunId).changes;
+      if (changed) {
+        database
+          .prepare(
+            "UPDATE tool_runs SET status = 'approved' WHERE id = ? AND status = 'approval_required'",
+          )
+          .run(toolRunId);
+      }
+    } else {
+      const changed = database
+        .prepare(
+          "UPDATE tool_approvals SET decision = 'rejected', rejected_at = ? WHERE tool_run_id = ? AND decision = 'pending'",
+        )
+        .run(now.toISOString(), toolRunId).changes;
+      if (changed) {
+        database
+          .prepare(
+            "UPDATE tool_runs SET status = 'rejected', error_code = 'USER_REJECTED', completed_at = ? WHERE id = ? AND status = 'approval_required'",
+          )
+          .run(now.toISOString(), toolRunId);
+      }
+    }
+
+    return getToolApprovalByRunId(toolRunId);
+  });
+
+  return transaction();
+}
+
+export function claimApprovedToolRun(toolRunId: string) {
+  const now = new Date().toISOString();
+  const changed = getKnowledgeDb()
+    .prepare(
+      `UPDATE tool_runs
+       SET status = 'running',
+           attempt_count = attempt_count + 1,
+           started_at = COALESCE(started_at, ?)
+       WHERE id = ? AND status = 'approved'`,
+    )
+    .run(now, toolRunId).changes;
+
+  return {
+    claimed: changed === 1,
+    run: getToolRun(toolRunId),
+  };
 }
