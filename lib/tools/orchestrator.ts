@@ -271,7 +271,9 @@ export async function handleModelFunctionCall(input: {
       status: "success",
       summary:
         definition.name === "lookup_order"
-          ? "Sipariş bilgisi bulundu."
+          ? execution.result.status === "Bulunamadı"
+            ? "Sipariş bulunamadı."
+            : "Sipariş bilgisi bulundu."
           : "Araç başarıyla çalıştı.",
       arguments: decision.arguments as Record<string, unknown>,
       result: execution.result,
