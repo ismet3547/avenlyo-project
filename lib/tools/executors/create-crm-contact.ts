@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getKnowledgeDb } from "@/lib/rag/db";
+import { getKnowledgeDb } from "../../rag/db";
 
 type CreateCrmContactInput = {
   name: string;
