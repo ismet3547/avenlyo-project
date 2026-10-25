@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import type { Agent, BusinessProfile, ChatMessage } from "@/lib/types";
 
 type View = "overview" | "business" | "agents";
@@ -70,8 +71,9 @@ function Icon({
   );
 }
 
-export function Studio() {
-  const [view, setView] = useState<View>("overview");
+export function Studio({ initialView = "overview" }: { initialView?: View }) {
+  const router = useRouter();
+  const view = initialView;
   const [business, setBusiness] = useState<BusinessProfile>(emptyBusiness);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -120,8 +122,13 @@ export function Studio() {
   }
 
   function navigate(next: View) {
-    setView(next);
+    const routes: Record<View, string> = {
+      overview: "/",
+      business: "/bilgiler",
+      agents: "/ajanlar",
+    };
     setMobileNav(false);
+    router.push(routes[next]);
   }
 
   async function saveBusiness(event: FormEvent) {
@@ -243,7 +250,7 @@ export function Studio() {
 
   const navItems: { id: View; label: string; icon: "home" | "business" | "agents" }[] = [
     { id: "overview", label: "Genel Bakış", icon: "home" },
-    { id: "business", label: "İşletmem", icon: "business" },
+    { id: "business", label: "İşletme Bilgileri", icon: "business" },
     { id: "agents", label: "Ajanlar", icon: "agents" },
   ];
 
@@ -323,7 +330,7 @@ export function Studio() {
                       <Icon name="spark" /> İlk ajanını oluştur
                     </button>
                     <button className="ghost" onClick={() => navigate("business")}>
-                      İşletme profilini düzenle <Icon name="arrow" size={16} />
+                      İşletme bilgilerini düzenle <Icon name="arrow" size={16} />
                     </button>
                   </div>
                 </div>
@@ -393,7 +400,7 @@ export function Studio() {
               <div className="page-title">
                 <div>
                   <span className="eyebrow accent">BİLGİ TABANI</span>
-                  <h1>İşletmem</h1>
+                  <h1>İşletme Bilgileri</h1>
                   <p>Ajanlarının markanı, müşterini ve sunduğun değeri anlaması için temel bilgileri ekle.</p>
                 </div>
                 <div className="profile-score">
@@ -515,7 +522,7 @@ export function Studio() {
                 <Icon name="check" />
                 <div>
                   <strong>İşletme bağlamı otomatik eklenir</strong>
-                  <span>Bu ajan, “İşletmem” bölümündeki tüm güncel bilgileri kullanır.</span>
+                  <span>Bu ajan, “İşletme Bilgileri” sayfasındaki tüm güncel bilgileri kullanır.</span>
                 </div>
               </div>
             </div>
