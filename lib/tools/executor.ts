@@ -54,6 +54,7 @@ export async function executeRegisteredTool(input: {
   definition: ToolDefinition;
   arguments: unknown;
   idempotencyKey?: string;
+  dryRun?: boolean;
 }): Promise<ToolExecutionResult> {
   const startedAt = performance.now();
 
@@ -72,20 +73,26 @@ export async function executeRegisteredTool(input: {
 
     const rawResult =
       input.definition.name === "create_crm_contact"
-        ? await withTimeout(
-            Promise.resolve(
-              createCrmContact(
-                input.arguments as {
-                  name: string;
-                  phone: string | null;
-                  email: string | null;
-                  notes: string | null;
-                },
-                input.idempotencyKey || "",
+        ? input.dryRun
+          ? {
+              contact_id: "DRY-RUN",
+              name: (input.arguments as { name: string }).name,
+              created: false,
+            }
+          : await withTimeout(
+              Promise.resolve(
+                createCrmContact(
+                  input.arguments as {
+                    name: string;
+                    phone: string | null;
+                    email: string | null;
+                    notes: string | null;
+                  },
+                  input.idempotencyKey || "",
+                ),
               ),
-            ),
-            timeoutMs,
-          )
+              timeoutMs,
+            )
         : await withTimeout(
             Promise.resolve(runLocalTool(input.definition, input.arguments)),
             timeoutMs,
