@@ -126,3 +126,72 @@ export type ToolApprovalRecord = {
   expiresAt: string | null;
   createdAt: string;
 };
+
+
+export type ToolRunSummary = {
+  id: string;
+  traceId: string;
+  agentId: string;
+  toolId: string;
+  toolName: string;
+  toolDisplayName: string;
+  status: ToolRunStatus;
+  riskLevel: ToolRiskLevel;
+  requiresApproval: boolean;
+  approvalDecision: ToolApprovalDecision | null;
+  errorCode: string | null;
+  attemptCount: number;
+  durationMs: number | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+
+export type ToolRunAttemptView = {
+  attemptNumber: number;
+  startedAt: string;
+  completedAt: string | null;
+  durationMs: number | null;
+  outcome: string;
+  errorCode: string | null;
+};
+
+export type ToolAuditEventView = {
+  id: string;
+  eventType: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type ToolRunDetail = ToolRunSummary & {
+  conversationId: string | null;
+  messageId: string | null;
+  callId: string | null;
+  arguments: Record<string, unknown> | null;
+  result: Record<string, unknown> | null;
+  approval: {
+    decision: ToolApprovalDecision;
+    approvedAt: string | null;
+    rejectedAt: string | null;
+    expiresAt: string | null;
+  } | null;
+  attempts: ToolRunAttemptView[];
+  auditEvents: ToolAuditEventView[];
+};
+
+export type ToolOperationsSummary = {
+  totalRuns: number;
+  successRuns: number;
+  failedRuns: number;
+  pendingApprovals: number;
+  rejectedRuns: number;
+  crmContacts: number;
+};
+
+export type CrmContact = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
+  createdAt: string;
+};

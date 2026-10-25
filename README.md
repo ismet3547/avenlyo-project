@@ -259,3 +259,30 @@ Bu sayede model bir tool çağrısı üretse bile Avenlyo'nun local policy katma
 `OPENAI_API_KEY` hiçbir zaman istemci tarafına gönderilmez. Anahtarınızı repoya commit etmeyin; yalnızca `.env.local` içinde tutun.
 
 Yüklenen belgeler kullanıcı girdisi olarak kabul edilir; uygulama dosya uzantısı, boyut, PDF sayfa ve OCR sayfa limitleri uygular. PDF dosyaları tarayıcıya yalnızca doğrulanmış belge kimliği üzerinden `/api/knowledge/:id/file` endpoint'i ile inline aktarılır.
+
+
+## Tool Runs / Audit / Local CRM UI
+
+`/araclar` sayfası üç operasyon sekmesine ayrılır:
+
+- **Katalog**: tool enable/disable, risk ve approval bilgisi
+- **İşlem geçmişi**: son tool run'ları, durum, ajan, süre ve zaman
+- **Yerel CRM**: onaylı `create_crm_contact` işlemleriyle oluşan local müşteri kayıtları
+
+Bir run satırına tıklandığında detay drawer'ında:
+
+- doğrulanmış tool argümanları,
+- minimal tool sonucu,
+- approval kararı ve zamanları,
+- execution attempt kayıtları,
+- secret-redacted audit trail
+
+gösterilir.
+
+Operasyon API'leri read-only'dir:
+
+- `GET /api/tool-runs?limit=100`
+- `GET /api/tool-runs/:id`
+- `GET /api/crm/contacts?limit=250`
+
+UI'ye idempotency key veya raw approval continuation verisi gönderilmez. Yerel CRM görünümü bu aşamada salt okunurdur; düzenleme/silme ayrı write/destructive policy gerektirecektir.

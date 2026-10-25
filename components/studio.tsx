@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { TextSourceViewer } from "@/components/text-source-viewer";
 import type { Agent, BusinessProfile, ChatMessage, Conversation, KnowledgeDocument, ToolActivity } from "@/lib/types";
-import type { ToolCatalogItem, ToolFeatureFlags } from "@/lib/tools/types";
+import type { CrmContact, ToolCatalogItem, ToolFeatureFlags, ToolOperationsSummary, ToolRunDetail, ToolRunStatus, ToolRunSummary } from "@/lib/tools/types";
 
 const PdfSourceViewer = dynamic(
   () =>
@@ -17,6 +17,7 @@ const PdfSourceViewer = dynamic(
 );
 
 type View = "overview" | "business" | "knowledge" | "tools" | "agents";
+type ToolsTab = "catalog" | "runs" | "crm";
 
 const emptyBusiness: BusinessProfile = {
   name: "",
@@ -44,6 +45,65 @@ const models = [
   { value: "gpt-6.1-sol", label: "GPT-6.1 Sol", hint: "Dengeli · güçlü" },
   { value: "gpt-6-astra", label: "GPT-6 Astra", hint: "En yüksek kalite" },
 ];
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("tr-TR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function toolRunStatusLabel(status: ToolRunStatus) {
+  const labels: Record<ToolRunStatus, string> = {
+    proposed: "Önerildi",
+    approval_required: "Onay bekliyor",
+    approved: "Onaylandı",
+    rejected: "Reddedildi",
+    running: "Çalışıyor",
+    success: "Başarılı",
+    failed: "Hata",
+    cancelled: "İptal",
+  };
+  return labels[status];
+}
+
+function humanizeKey(key: string) {
+  return key
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toLocaleUpperCase("tr"));
+}
+
+function DetailObject({
+  value,
+  empty = "Kayıt yok",
+}: {
+  value: Record<string, unknown> | null;
+  empty?: string;
+}) {
+  if (!value || Object.keys(value).length === 0) {
+    return <p className="operations-empty-copy">{empty}</p>;
+  }
+
+  return (
+    <div className="operations-kv-grid">
+      {Object.entries(value).map(([key, item]) => (
+        <div key={key}>
+          <span>{humanizeKey(key)}</span>
+          <strong>
+            {item === null
+              ? "—"
+              : typeof item === "object"
+                ? JSON.stringify(item)
+                : String(item)}
+          </strong>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 
 function ToolActivityCard({
@@ -258,6 +318,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const [toolFlags, setToolFlags] = useState<ToolFeatureFlags | null>(null);
   const [agentToolIds, setAgentToolIds] = useState<string[]>([]);
   const [toolSavingId, setToolSavingId] = useState<string | null>(null);
+  const [toolsTab, setToolsTab] = useState<ToolsTab>("catalog");
+  const [toolRuns, setToolRuns] = useState<ToolRunSummary[]>([]);
+  const [toolOpsSummary, setToolOpsSummary] = useState<ToolOperationsSummary | null>(null);
+  const [crmContacts, setCrmContacts] = useState<CrmContact[]>([]);
+  const [toolOpsLoading, setToolOpsLoading] = useState(false);
+  const [toolRunDetail, setToolRunDetail] = useState<ToolRunDetail | null>(null);
+  const [toolRunDetailLoading, setToolRunDetailLoading] = useState(false);
+  const [runStatusFilter, setRunStatusFilter] = useState<"all" | ToolRunStatus>("all");
+  const [crmSearch, setCrmSearch] = useState("");
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [agentKnowledgeIds, setAgentKnowledgeIds] = useState<string[]>([]);
@@ -307,6 +376,11 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (view !== "tools") return;
+    void refreshToolOperations();
+  }, [view]);
+
   const completedFields = useMemo(() => {
     const keys: (keyof BusinessProfile)[] = [
       "name",
@@ -335,6 +409,25 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       ),
     [chat],
   );
+  const filteredToolRuns = useMemo(
+    () =>
+      runStatusFilter === "all"
+        ? toolRuns
+        : toolRuns.filter((run) => run.status === runStatusFilter),
+    [toolRuns, runStatusFilter],
+  );
+  const filteredCrmContacts = useMemo(() => {
+    const query = crmSearch.trim().toLocaleLowerCase("tr");
+    if (!query) return crmContacts;
+
+    return crmContacts.filter((contact) =>
+      [contact.name, contact.email, contact.phone, contact.id]
+        .filter(Boolean)
+        .some((value) =>
+          String(value).toLocaleLowerCase("tr").includes(query),
+        ),
+    );
+  }, [crmContacts, crmSearch]);
 
   function flash(text: string) {
     setNotice(text);
@@ -351,6 +444,65 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     };
     setMobileNav(false);
     router.push(routes[next]);
+  }
+
+  async function refreshToolOperations() {
+    setToolOpsLoading(true);
+    try {
+      const [runsResponse, crmResponse] = await Promise.all([
+        fetch("/api/tool-runs?limit=100"),
+        fetch("/api/crm/contacts?limit=250"),
+      ]);
+      const [runsData, crmData] = await Promise.all([
+        runsResponse.json(),
+        crmResponse.json(),
+      ]);
+
+      if (!runsResponse.ok) {
+        throw new Error(runsData.error || "İşlem geçmişi yüklenemedi.");
+      }
+      if (!crmResponse.ok) {
+        throw new Error(crmData.error || "CRM kayıtları yüklenemedi.");
+      }
+
+      setToolRuns(Array.isArray(runsData.runs) ? runsData.runs : []);
+      setToolOpsSummary(runsData.summary ?? null);
+      setCrmContacts(Array.isArray(crmData.contacts) ? crmData.contacts : []);
+    } catch (error) {
+      flash(
+        error instanceof Error
+          ? error.message
+          : "Araç operasyon verileri yüklenemedi.",
+      );
+    } finally {
+      setToolOpsLoading(false);
+    }
+  }
+
+  async function openToolRunDetail(runId: string) {
+    setToolRunDetailLoading(true);
+    try {
+      const response = await fetch(
+        `/api/tool-runs/${encodeURIComponent(runId)}`,
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "İşlem detayı yüklenemedi.");
+      }
+      setToolRunDetail(data as ToolRunDetail);
+    } catch (error) {
+      flash(
+        error instanceof Error
+          ? error.message
+          : "İşlem detayı yüklenemedi.",
+      );
+    } finally {
+      setToolRunDetailLoading(false);
+    }
+  }
+
+  function agentName(agentId: string) {
+    return agents.find((agent) => agent.id === agentId)?.name || "Silinmiş / bilinmeyen ajan";
   }
 
   async function saveBusiness(event: FormEvent) {
@@ -1482,6 +1634,42 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 </span>
               </div>
 
+              <div className="tools-tabs" role="tablist" aria-label="Araçlar bölümleri">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={toolsTab === "catalog"}
+                  className={toolsTab === "catalog" ? "active" : ""}
+                  onClick={() => setToolsTab("catalog")}
+                >
+                  Katalog
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={toolsTab === "runs"}
+                  className={toolsTab === "runs" ? "active" : ""}
+                  onClick={() => setToolsTab("runs")}
+                >
+                  İşlem geçmişi
+                  {toolOpsSummary?.pendingApprovals ? (
+                    <span>{toolOpsSummary.pendingApprovals}</span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={toolsTab === "crm"}
+                  className={toolsTab === "crm" ? "active" : ""}
+                  onClick={() => setToolsTab("crm")}
+                >
+                  Yerel CRM
+                  <span>{toolOpsSummary?.crmContacts ?? crmContacts.length}</span>
+                </button>
+              </div>
+
+              {toolsTab === "catalog" && (
+                <>
               {toolsCatalog.length === 0 ? (
                 <div className="knowledge-empty">
                   <div className="empty-spark"><Icon name="tools" /></div>
@@ -1556,6 +1744,187 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   </span>
                 </div>
               </div>
+                </>
+              )}
+
+              {toolsTab === "runs" && (
+                <div className="operations-panel">
+                  <div className="operations-summary-grid">
+                    <article>
+                      <span>Toplam işlem</span>
+                      <strong>{toolOpsSummary?.totalRuns ?? 0}</strong>
+                    </article>
+                    <article>
+                      <span>Başarılı</span>
+                      <strong>{toolOpsSummary?.successRuns ?? 0}</strong>
+                    </article>
+                    <article>
+                      <span>Onay bekleyen</span>
+                      <strong>{toolOpsSummary?.pendingApprovals ?? 0}</strong>
+                    </article>
+                    <article>
+                      <span>Hata</span>
+                      <strong>{toolOpsSummary?.failedRuns ?? 0}</strong>
+                    </article>
+                  </div>
+
+                  <div className="operations-toolbar">
+                    <div>
+                      <span className="eyebrow">TOOL RUNS</span>
+                      <h2>İşlem geçmişi</h2>
+                    </div>
+                    <div className="operations-actions">
+                      <select
+                        value={runStatusFilter}
+                        onChange={(event) =>
+                          setRunStatusFilter(
+                            event.target.value as "all" | ToolRunStatus,
+                          )
+                        }
+                        aria-label="Durum filtresi"
+                      >
+                        <option value="all">Tüm durumlar</option>
+                        <option value="success">Başarılı</option>
+                        <option value="approval_required">Onay bekleyen</option>
+                        <option value="rejected">Reddedildi</option>
+                        <option value="failed">Hata</option>
+                        <option value="cancelled">İptal</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="ghost compact"
+                        onClick={() => void refreshToolOperations()}
+                        disabled={toolOpsLoading}
+                      >
+                        <Icon name="refresh" size={15} />
+                        {toolOpsLoading ? "Yenileniyor" : "Yenile"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {toolOpsLoading && toolRuns.length === 0 ? (
+                    <div className="operations-empty">
+                      <span>İşlem geçmişi yükleniyor…</span>
+                    </div>
+                  ) : filteredToolRuns.length === 0 ? (
+                    <div className="operations-empty">
+                      <div className="empty-spark"><Icon name="tools" /></div>
+                      <h3>Bu filtrede işlem yok</h3>
+                      <p>Playground'da bir tool çalıştırdığında burada görünecek.</p>
+                    </div>
+                  ) : (
+                    <div className="operations-table-wrap">
+                      <div className="operations-table operations-table-head">
+                        <span>Araç</span>
+                        <span>Ajan</span>
+                        <span>Durum</span>
+                        <span>Süre</span>
+                        <span>Zaman</span>
+                        <span />
+                      </div>
+                      {filteredToolRuns.map((run) => (
+                        <button
+                          type="button"
+                          className="operations-table operations-row"
+                          key={run.id}
+                          onClick={() => void openToolRunDetail(run.id)}
+                          disabled={toolRunDetailLoading}
+                        >
+                          <span className="operation-tool-cell">
+                            <strong>{run.toolDisplayName}</strong>
+                            <small>{run.toolName}</small>
+                          </span>
+                          <span>{agentName(run.agentId)}</span>
+                          <span>
+                            <i className={`run-status status-${run.status}`}>
+                              {toolRunStatusLabel(run.status)}
+                            </i>
+                          </span>
+                          <span>
+                            {typeof run.durationMs === "number"
+                              ? `${run.durationMs} ms`
+                              : "—"}
+                          </span>
+                          <span>{formatDateTime(run.createdAt)}</span>
+                          <span className="operation-arrow">›</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {toolsTab === "crm" && (
+                <div className="operations-panel">
+                  <div className="crm-overview-card">
+                    <div>
+                      <span className="eyebrow">LOCAL CRM</span>
+                      <h2>Yerel müşteriler</h2>
+                      <p>
+                        Onaylanmış <code>create_crm_contact</code> işlemleriyle
+                        oluşturulan kayıtlar. Bu görünüm salt okunurdur.
+                      </p>
+                    </div>
+                    <strong>{toolOpsSummary?.crmContacts ?? crmContacts.length}</strong>
+                  </div>
+
+                  <div className="operations-toolbar crm-toolbar">
+                    <label className="crm-search">
+                      <span>Ara</span>
+                      <input
+                        value={crmSearch}
+                        onChange={(event) => setCrmSearch(event.target.value)}
+                        placeholder="İsim, e-posta, telefon veya CRM ID"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="ghost compact"
+                      onClick={() => void refreshToolOperations()}
+                      disabled={toolOpsLoading}
+                    >
+                      <Icon name="refresh" size={15} />
+                      {toolOpsLoading ? "Yenileniyor" : "Yenile"}
+                    </button>
+                  </div>
+
+                  {filteredCrmContacts.length === 0 ? (
+                    <div className="operations-empty">
+                      <div className="empty-spark"><Icon name="business" /></div>
+                      <h3>
+                        {crmSearch.trim() ? "Eşleşen müşteri yok" : "Henüz CRM kaydı yok"}
+                      </h3>
+                      <p>
+                        {crmSearch.trim()
+                          ? "Arama terimini değiştirip tekrar deneyebilirsin."
+                          : "Gerçek write onayı tamamlandığında müşteri burada görünür."}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="crm-contact-list">
+                      {filteredCrmContacts.map((contact) => (
+                        <article className="crm-contact-row" key={contact.id}>
+                          <div className="crm-avatar">
+                            {contact.name.trim().slice(0, 1).toLocaleUpperCase("tr") || "?"}
+                          </div>
+                          <div className="crm-contact-main">
+                            <div>
+                              <strong>{contact.name}</strong>
+                              <code>{contact.id}</code>
+                            </div>
+                            <div className="crm-contact-meta">
+                              <span>{contact.email || "E-posta yok"}</span>
+                              <span>{contact.phone || "Telefon yok"}</span>
+                              <span>{formatDateTime(contact.createdAt)}</span>
+                            </div>
+                            {contact.notes && <p>{contact.notes}</p>}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </section>
           )}
 
@@ -1592,6 +1961,129 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
           )}
         </div>
       </section>
+
+      {toolRunDetail && (
+        <div className="modal-layer operations-layer" role="dialog" aria-modal="true">
+          <button
+            className="modal-backdrop"
+            onClick={() => setToolRunDetail(null)}
+            aria-label="İşlem detayını kapat"
+          />
+          <aside className="operations-drawer">
+            <div className="operations-drawer-head">
+              <div>
+                <span className="eyebrow accent">TOOL RUN</span>
+                <h2>{toolRunDetail.toolDisplayName}</h2>
+                <p>{formatDateTime(toolRunDetail.createdAt)}</p>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setToolRunDetail(null)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="operations-drawer-body">
+              <div className="run-detail-status-row">
+                <span className={`run-status status-${toolRunDetail.status}`}>
+                  {toolRunStatusLabel(toolRunDetail.status)}
+                </span>
+                <code>{toolRunDetail.toolName}</code>
+              </div>
+
+              <div className="run-detail-grid">
+                <div><span>Ajan</span><strong>{agentName(toolRunDetail.agentId)}</strong></div>
+                <div><span>Süre</span><strong>{typeof toolRunDetail.durationMs === "number" ? `${toolRunDetail.durationMs} ms` : "—"}</strong></div>
+                <div><span>Risk</span><strong>{toolRiskLabel(toolRunDetail.riskLevel)}</strong></div>
+                <div><span>Deneme</span><strong>{toolRunDetail.attemptCount}</strong></div>
+                <div><span>Run ID</span><strong className="mono-wrap">{toolRunDetail.id}</strong></div>
+                <div><span>Trace ID</span><strong className="mono-wrap">{toolRunDetail.traceId}</strong></div>
+              </div>
+
+              {toolRunDetail.approval && (
+                <section className="run-detail-section">
+                  <div className="run-detail-section-title">
+                    <strong>Onay</strong>
+                    <span>{toolRunDetail.approval.decision}</span>
+                  </div>
+                  <div className="run-detail-grid compact">
+                    <div><span>Onaylandı</span><strong>{formatDateTime(toolRunDetail.approval.approvedAt)}</strong></div>
+                    <div><span>Reddedildi</span><strong>{formatDateTime(toolRunDetail.approval.rejectedAt)}</strong></div>
+                    <div><span>Son geçerlilik</span><strong>{formatDateTime(toolRunDetail.approval.expiresAt)}</strong></div>
+                  </div>
+                </section>
+              )}
+
+              <section className="run-detail-section">
+                <div className="run-detail-section-title"><strong>Argümanlar</strong></div>
+                <DetailObject value={toolRunDetail.arguments} />
+              </section>
+
+              <section className="run-detail-section">
+                <div className="run-detail-section-title"><strong>Sonuç</strong></div>
+                <DetailObject value={toolRunDetail.result} empty="Sonuç kaydı yok" />
+                {toolRunDetail.errorCode && (
+                  <p className="run-error-code">Hata kodu: {toolRunDetail.errorCode}</p>
+                )}
+              </section>
+
+              <section className="run-detail-section">
+                <div className="run-detail-section-title">
+                  <strong>Denemeler</strong>
+                  <span>{toolRunDetail.attempts.length}</span>
+                </div>
+                {toolRunDetail.attempts.length === 0 ? (
+                  <p className="operations-empty-copy">Execution attempt kaydı yok.</p>
+                ) : (
+                  <div className="attempt-list">
+                    {toolRunDetail.attempts.map((attempt) => (
+                      <div key={attempt.attemptNumber}>
+                        <span>#{attempt.attemptNumber}</span>
+                        <strong>{attempt.outcome}</strong>
+                        <small>
+                          {typeof attempt.durationMs === "number"
+                            ? `${attempt.durationMs} ms`
+                            : "—"}
+                        </small>
+                        {attempt.errorCode && <code>{attempt.errorCode}</code>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="run-detail-section">
+                <div className="run-detail-section-title">
+                  <strong>Audit trail</strong>
+                  <span>{toolRunDetail.auditEvents.length}</span>
+                </div>
+                {toolRunDetail.auditEvents.length === 0 ? (
+                  <p className="operations-empty-copy">Audit olayı yok.</p>
+                ) : (
+                  <div className="audit-timeline">
+                    {toolRunDetail.auditEvents.map((event) => (
+                      <article key={event.id}>
+                        <i />
+                        <div>
+                          <div className="audit-event-head">
+                            <strong>{humanizeKey(event.eventType)}</strong>
+                            <span>{formatDateTime(event.createdAt)}</span>
+                          </div>
+                          {Object.keys(event.metadata).length > 0 && (
+                            <DetailObject value={event.metadata} />
+                          )}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
+          </aside>
+        </div>
+      )}
 
       {editorOpen && (
         <div className="modal-layer" role="dialog" aria-modal="true">
