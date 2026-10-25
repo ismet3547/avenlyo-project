@@ -10,6 +10,7 @@ import {
   markKnowledgeDocumentReady,
   replaceKnowledgeChunks,
 } from "@/lib/rag/db";
+import type { ExtractionMethod } from "@/lib/types";
 
 export async function indexKnowledgeDocument(
   documentId: string,
@@ -26,11 +27,7 @@ export async function indexKnowledgeDocument(
     const chunks = chunkExtractedPages(extracted.pages);
 
     if (!chunks.length || chunks.every((chunk) => chunk.text.length < 20)) {
-      throw new Error(
-        document.extension === ".pdf"
-          ? "Bu PDF'den okunabilir metin çıkarılamadı. Dosya taranmış olabilir; OCR desteği henüz etkin değil."
-          : "Dosyada indekslenebilecek metin bulunamadı.",
-      );
+      throw new Error("Dosyada indekslenebilecek metin bulunamadı.");
     }
 
     const embeddings = await embedTexts(chunks.map((chunk) => chunk.text));
@@ -43,10 +40,29 @@ export async function indexKnowledgeDocument(
       pageStart: chunk.pageStart,
       pageEnd: chunk.pageEnd,
       embedding: embeddings[index] ?? [],
+      extractionMethod: chunk.extractionMethod,
+      ocrConfidence: chunk.ocrConfidence,
     }));
 
+    const nativePages = extracted.pages.filter(
+      (page) => page.text.trim() && page.extractionMethod === "native",
+    ).length;
+    const ocrPages = extracted.pages.filter(
+      (page) => page.text.trim() && page.extractionMethod === "ocr",
+    ).length;
+
+    let extractionMethod: ExtractionMethod = "native";
+    if (ocrPages && nativePages) extractionMethod = "mixed";
+    else if (ocrPages) extractionMethod = "ocr";
+
     replaceKnowledgeChunks(documentId, rows);
-    markKnowledgeDocumentReady(documentId, extracted.pageCount, rows.length);
+    markKnowledgeDocumentReady(
+      documentId,
+      extracted.pageCount,
+      rows.length,
+      extractionMethod,
+      ocrPages,
+    );
 
     return getKnowledgeDocument(documentId);
   } catch (error) {
