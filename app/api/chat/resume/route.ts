@@ -236,6 +236,55 @@ export async function POST(request: Request) {
 
   const flags = getToolFeatureFlags();
 
+  if (decision === "rejected") {
+    const decided = decideToolApproval(toolRunId, "rejected");
+    if (!decided) {
+      return NextResponse.json(
+        { error: "Onay kaydı bulunamadı." },
+        { status: 404 },
+      );
+    }
+
+    const rejectedActivity: ToolActivity = {
+      id: toolRunId,
+      toolRunId,
+      toolName: definition.name,
+      displayName: definition.displayName,
+      status: "rejected",
+      summary:
+        decided.decision === "expired"
+          ? "Onay süresi doldu; işlem çalıştırılmadı."
+          : "İşlem kullanıcı tarafından reddedildi.",
+      arguments: args as Record<string, unknown>,
+      ...(decided.decision === "expired"
+        ? { error: "APPROVAL_EXPIRED" }
+        : {}),
+    };
+
+    appendToolAuditEvent({
+      toolRunId,
+      eventType:
+        decided.decision === "expired"
+          ? "tool.approval_expired"
+          : "tool.approval_rejected",
+      metadata: { tool: definition.name },
+    });
+
+    const rejectedMessage = updateConversationMessage({
+      id: run.messageId,
+      content:
+        decided.decision === "expired"
+          ? "Onay süresi doldu. İşlem çalıştırılmadı."
+          : "İşlem reddedildi; herhangi bir CRM kaydı oluşturulmadı.",
+      toolActivities: upsertActivity(
+        pendingMessage.toolActivities || [],
+        rejectedActivity,
+      ),
+    });
+
+    return doneResponse(rejectedMessage ?? pendingMessage, conversation);
+  }
+
   if (decision === "approved") {
     const agentAllowed = getEnabledAgentToolIds(run.agentId).includes(
       definition.id,
@@ -343,37 +392,7 @@ export async function POST(request: Request) {
       };
 
       try {
-        if (decision === "rejected") {
-          const rejectedActivity: ToolActivity = {
-            id: toolRunId,
-            toolRunId,
-            toolName: definition.name,
-            displayName: definition.displayName,
-            status: "rejected",
-            summary: "İşlem kullanıcı tarafından reddedildi.",
-            arguments: args as Record<string, unknown>,
-          };
-          activities = upsertActivity(activities, rejectedActivity);
-          push({ type: "tool", activity: rejectedActivity });
-
-          appendToolAuditEvent({
-            toolRunId,
-            eventType: "tool.approval_rejected",
-            metadata: { tool: definition.name },
-          });
-
-          functionOutput = {
-            type: "function_call_output",
-            call_id: run.callId!,
-            output: JSON.stringify({
-              ok: false,
-              error: {
-                code: "USER_REJECTED",
-                message: "Kullanıcı işlemi onaylamadı.",
-              },
-            }),
-          };
-        } else {
+        {
           const claimed = claimApprovedToolRun(toolRunId);
           if (!claimed.claimed) {
             const current = claimed.run;
