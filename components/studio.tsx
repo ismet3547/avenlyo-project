@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { TextSourceViewer } from "@/components/text-source-viewer";
 import type { Agent, BusinessProfile, ChatMessage, Conversation, KnowledgeDocument, ToolActivity } from "@/lib/types";
-import type { ToolCatalogItem, ToolFeatureFlags } from "@/lib/tools/types";
+import type { CrmContact, ToolCatalogItem, ToolFeatureFlags, ToolOperationsSummary, ToolRunDetail, ToolRunStatus, ToolRunSummary } from "@/lib/tools/types";
 
 const PdfSourceViewer = dynamic(
   () =>
@@ -17,6 +17,7 @@ const PdfSourceViewer = dynamic(
 );
 
 type View = "overview" | "business" | "knowledge" | "tools" | "agents";
+type ToolsTab = "catalog" | "runs" | "crm";
 
 const emptyBusiness: BusinessProfile = {
   name: "",
@@ -44,6 +45,65 @@ const models = [
   { value: "gpt-6.1-sol", label: "GPT-6.1 Sol", hint: "Dengeli · güçlü" },
   { value: "gpt-6-astra", label: "GPT-6 Astra", hint: "En yüksek kalite" },
 ];
+
+function formatDateTime(value: string | null | undefined) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("tr-TR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function toolRunStatusLabel(status: ToolRunStatus) {
+  const labels: Record<ToolRunStatus, string> = {
+    proposed: "Önerildi",
+    approval_required: "Onay bekliyor",
+    approved: "Onaylandı",
+    rejected: "Reddedildi",
+    running: "Çalışıyor",
+    success: "Başarılı",
+    failed: "Hata",
+    cancelled: "İptal",
+  };
+  return labels[status];
+}
+
+function humanizeKey(key: string) {
+  return key
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toLocaleUpperCase("tr"));
+}
+
+function DetailObject({
+  value,
+  empty = "Kayıt yok",
+}: {
+  value: Record<string, unknown> | null;
+  empty?: string;
+}) {
+  if (!value || Object.keys(value).length === 0) {
+    return <p className="operations-empty-copy">{empty}</p>;
+  }
+
+  return (
+    <div className="operations-kv-grid">
+      {Object.entries(value).map(([key, item]) => (
+        <div key={key}>
+          <span>{humanizeKey(key)}</span>
+          <strong>
+            {item === null
+              ? "—"
+              : typeof item === "object"
+                ? JSON.stringify(item)
+                : String(item)}
+          </strong>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 
 function ToolActivityCard({
@@ -258,6 +318,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const [toolFlags, setToolFlags] = useState<ToolFeatureFlags | null>(null);
   const [agentToolIds, setAgentToolIds] = useState<string[]>([]);
   const [toolSavingId, setToolSavingId] = useState<string | null>(null);
+  const [toolsTab, setToolsTab] = useState<ToolsTab>("catalog");
+  const [toolRuns, setToolRuns] = useState<ToolRunSummary[]>([]);
+  const [toolOpsSummary, setToolOpsSummary] = useState<ToolOperationsSummary | null>(null);
+  const [crmContacts, setCrmContacts] = useState<CrmContact[]>([]);
+  const [toolOpsLoading, setToolOpsLoading] = useState(false);
+  const [toolRunDetail, setToolRunDetail] = useState<ToolRunDetail | null>(null);
+  const [toolRunDetailLoading, setToolRunDetailLoading] = useState(false);
+  const [runStatusFilter, setRunStatusFilter] = useState<"all" | ToolRunStatus>("all");
+  const [crmSearch, setCrmSearch] = useState("");
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [agentKnowledgeIds, setAgentKnowledgeIds] = useState<string[]>([]);
@@ -307,6 +376,11 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (view !== "tools") return;
+    void refreshToolOperations();
+  }, [view]);
+
   const completedFields = useMemo(() => {
     const keys: (keyof BusinessProfile)[] = [
       "name",
@@ -335,6 +409,25 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       ),
     [chat],
   );
+  const filteredToolRuns = useMemo(
+    () =>
+      runStatusFilter === "all"
+        ? toolRuns
+        : toolRuns.filter((run) => run.status === runStatusFilter),
+    [toolRuns, runStatusFilter],
+  );
+  const filteredCrmContacts = useMemo(() => {
+    const query = crmSearch.trim().toLocaleLowerCase("tr");
+    if (!query) return crmContacts;
+
+    return crmContacts.filter((contact) =>
+      [contact.name, contact.email, contact.phone, contact.id]
+        .filter(Boolean)
+        .some((value) =>
+          String(value).toLocaleLowerCase("tr").includes(query),
+        ),
+    );
+  }, [crmContacts, crmSearch]);
 
   function flash(text: string) {
     setNotice(text);
@@ -351,6 +444,65 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     };
     setMobileNav(false);
     router.push(routes[next]);
+  }
+
+  async function refreshToolOperations() {
+    setToolOpsLoading(true);
+    try {
+      const [runsResponse, crmResponse] = await Promise.all([
+        fetch("/api/tool-runs?limit=100"),
+        fetch("/api/crm/contacts?limit=250"),
+      ]);
+      const [runsData, crmData] = await Promise.all([
+        runsResponse.json(),
+        crmResponse.json(),
+      ]);
+
+      if (!runsResponse.ok) {
+        throw new Error(runsData.error || "İşlem geçmişi yüklenemedi.");
+      }
+      if (!crmResponse.ok) {
+        throw new Error(crmData.error || "CRM kayıtları yüklenemedi.");
+      }
+
+      setToolRuns(Array.isArray(runsData.runs) ? runsData.runs : []);
+      setToolOpsSummary(runsData.summary ?? null);
+      setCrmContacts(Array.isArray(crmData.contacts) ? crmData.contacts : []);
+    } catch (error) {
+      flash(
+        error instanceof Error
+          ? error.message
+          : "Araç operasyon verileri yüklenemedi.",
+      );
+    } finally {
+      setToolOpsLoading(false);
+    }
+  }
+
+  async function openToolRunDetail(runId: string) {
+    setToolRunDetailLoading(true);
+    try {
+      const response = await fetch(
+        `/api/tool-runs/${encodeURIComponent(runId)}`,
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "İşlem detayı yüklenemedi.");
+      }
+      setToolRunDetail(data as ToolRunDetail);
+    } catch (error) {
+      flash(
+        error instanceof Error
+          ? error.message
+          : "İşlem detayı yüklenemedi.",
+      );
+    } finally {
+      setToolRunDetailLoading(false);
+    }
+  }
+
+  function agentName(agentId: string) {
+    return agents.find((agent) => agent.id === agentId)?.name || "Silinmiş / bilinmeyen ajan";
   }
 
   async function saveBusiness(event: FormEvent) {
