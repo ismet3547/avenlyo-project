@@ -97,12 +97,20 @@ export type ToolActivity = {
   toolRunId?: string;
   toolName: string;
   displayName: string;
-  status: "running" | "success" | "failed" | "blocked";
+  status:
+    | "running"
+    | "success"
+    | "failed"
+    | "blocked"
+    | "approval_required"
+    | "approved"
+    | "rejected";
   summary: string;
   arguments?: Record<string, unknown>;
   result?: Record<string, unknown>;
   error?: string;
   durationMs?: number;
+  approvalExpiresAt?: string;
 };
 
 export type ChatMessage = {
