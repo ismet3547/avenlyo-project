@@ -247,11 +247,28 @@ function createDatabase() {
       tool_run_id TEXT NOT NULL REFERENCES tool_runs(id) ON DELETE CASCADE,
       decision TEXT NOT NULL CHECK(decision IN ('pending', 'approved', 'rejected', 'expired')),
       arguments_hash TEXT NOT NULL,
+      resume_items_json TEXT,
       approved_at TEXT,
       rejected_at TEXT,
       expires_at TEXT,
       created_at TEXT NOT NULL
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tool_approvals_run
+      ON tool_approvals(tool_run_id);
+
+    CREATE TABLE IF NOT EXISTS crm_contacts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      phone TEXT,
+      email TEXT,
+      notes TEXT,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crm_contacts_created
+      ON crm_contacts(created_at DESC);
 
     CREATE TABLE IF NOT EXISTS tool_run_attempts (
       id TEXT PRIMARY KEY,
@@ -292,8 +309,9 @@ function createDatabase() {
     "TEXT NOT NULL DEFAULT 'native'",
   );
   ensureColumn(database, "chunks", "ocr_confidence", "REAL");
+  ensureColumn(database, "tool_approvals", "resume_items_json", "TEXT");
 
-  database.pragma("user_version = 3");
+  database.pragma("user_version = 4");
   return database;
 }
 
