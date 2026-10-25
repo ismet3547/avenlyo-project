@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAgent, deleteAgent, readData, updateAgent } from "@/lib/store";
+import { setAgentDocumentIds } from "@/lib/rag/db";
 
 function text(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
