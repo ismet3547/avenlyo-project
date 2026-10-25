@@ -43,7 +43,8 @@ function Icon({
   const paths: Record<string, React.ReactNode> = {
     home: <><path d="M3 10.8 12 3l9 7.8" /><path d="M5 9.5V21h14V9.5" /><path d="M9 21v-7h6v7" /></>,
     business: <><path d="M4 21V7l8-4 8 4v14" /><path d="M8 21v-5h8v5" /><path d="M8 10h.01M12 10h.01M16 10h.01" /></>,
-    knowledge: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z" /><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20" /></>,\n    agents: <><rect x="5" y="7" width="14" height="12" rx="3" /><path d="M9 12h.01M15 12h.01M9 16h6M12 7V4M9 4h6" /></>,
+    knowledge: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z" /><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20" /></>,
+    agents: <><rect x="5" y="7" width="14" height="12" rx="3" /><path d="M9 12h.01M15 12h.01M9 16h6M12 7V4M9 4h6" /></>,
     plus: <><path d="M12 5v14M5 12h14" /></>,
     arrow: <path d="m9 18 6-6-6-6" />,
     spark: <path d="m12 3 1.35 4.12L17.5 8.5l-4.15 1.38L12 14l-1.35-4.12L6.5 8.5l4.15-1.38L12 3ZM19 15l.75 2.25L22 18l-2.25.75L19 21l-.75-2.25L16 18l2.25-.75L19 15Z" />,
@@ -51,7 +52,9 @@ function Icon({
     trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14" /></>,
     edit: <><path d="M4 20h4l11-11-4-4L4 16v4Z" /><path d="m13.5 6.5 4 4" /></>,
     send: <><path d="m22 2-7 20-4-9-9-4 20-7Z" /><path d="M22 2 11 13" /></>,
-    menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,\n    upload: <><path d="M12 16V4M7 9l5-5 5 5" /><path d="M5 20h14" /></>,\n    refresh: <><path d="M20 11a8 8 0 1 0 1.2 4.2" /><path d="M20 4v7h-7" /></>,
+    menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
+    upload: <><path d="M12 16V4M7 9l5-5 5 5" /><path d="M5 20h14" /></>,
+    refresh: <><path d="M20 11a8 8 0 1 0 1.2 4.2" /><path d="M20 4v7h-7" /></>,
   };
 
   return (
