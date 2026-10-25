@@ -1483,7 +1483,8 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   <div className="tool-permission-options">
                     {toolsCatalog.map((tool) => {
                       const checked = agentToolIds.includes(tool.id);
-                      const unavailable = !tool.enabled || !tool.executionReady;
+                      const unavailable =
+                        !tool.enabled || (!tool.executionReady && !checked);
 
                       return (
                         <button
