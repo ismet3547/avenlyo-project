@@ -62,7 +62,7 @@ const definitions: ToolDefinition[] = [
     inputSchema: createCrmContactInput,
     outputSchema: createCrmContactOutput,
     config: {
-      executor: "planned",
+      executor: "local",
       resultAllowlist: ["contact_id", "name", "created"],
     },
   },
