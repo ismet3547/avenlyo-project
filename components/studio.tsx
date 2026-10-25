@@ -1447,13 +1447,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 <div>
                   <strong>
                     {toolFlags?.toolsEnabled
-                      ? "Read-only tool execution hazır"
+                      ? toolFlags.writesEnabled
+                        ? "Read + onaylı write execution hazır"
+                        : "Read-only execution hazır · write kapalı"
                       : "Tools hazır · master anahtarı kapalı"}
                   </strong>
                   <span>
-                    <code>lookup_order</code> artık Playground içinde çalışabilir.
-                    Aracı ajana ata. Master kapalıysa <code>AVENLYO_TOOLS_ENABLED=true</code>
-                    yapıp sunucuyu yeniden başlat. Write araçları bu aşamada hâlâ çalıştırılmaz.
+                    <code>lookup_order</code> doğrudan çalışır. <code>create_crm_contact</code>
+                    ise yalnız write anahtarı açıksa modele verilir ve çalışmadan önce kullanıcı onayı ister.
+                    Dry-run açıksa onay akışı tamamlanır ama gerçek CRM kaydı oluşturulmaz.
                   </span>
                 </div>
                 <span className={`tools-master-state ${toolFlags?.toolsEnabled ? "on" : "off"}`}>
@@ -1750,7 +1752,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 )}
 
                 <div className="tool-picker-note">
-                  Seçilen read-only araçlar, Tools master anahtarı açıksa Playground içinde kullanılabilir.
+                  Seçilen araçlar yalnız global güvenlik anahtarları izin veriyorsa Playground içinde kullanılabilir. Write araçları ayrıca kullanıcı onayı ister.
                 </div>
               </div>
 
