@@ -49,6 +49,7 @@ export type KnowledgeDocument = {
 };
 
 export type KnowledgeSource = {
+  chunkId?: string;
   documentId: string;
   documentName: string;
   pageStart: number | null;
@@ -68,6 +69,9 @@ export type RagDebugCandidate = {
   semanticScore?: number;
   keywordRank?: number;
   finalScore?: number;
+  preview?: string;
+  selectionReason?: string;
+  rejectedReason?: string;
 };
 
 export type RagDebugTrace = {
@@ -77,7 +81,10 @@ export type RagDebugTrace = {
   semanticCandidates: RagDebugCandidate[];
   keywordCandidates: RagDebugCandidate[];
   selectedCandidates: RagDebugCandidate[];
+  rejectedCandidates: RagDebugCandidate[];
   selectedTokenCount: number;
+  confidence: "high" | "medium" | "low" | "none";
+  semanticThreshold: number;
   timings: {
     embeddingMs: number;
     retrievalMs: number;
@@ -86,8 +93,20 @@ export type RagDebugTrace = {
 };
 
 export type ChatMessage = {
+  id?: string;
+  conversationId?: string;
   role: "user" | "assistant";
   content: string;
   sources?: KnowledgeSource[];
   debug?: RagDebugTrace;
+  createdAt?: string;
+  streaming?: boolean;
+};
+
+export type Conversation = {
+  id: string;
+  agentId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
 };

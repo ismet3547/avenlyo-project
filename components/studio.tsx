@@ -1,9 +1,11 @@
 "use client";
 
-import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import type { Agent, BusinessProfile, ChatMessage, KnowledgeDocument } from "@/lib/types";
+import { MarkdownMessage } from "@/components/markdown-message";
+import { TextSourceViewer } from "@/components/text-source-viewer";
+import type { Agent, BusinessProfile, ChatMessage, Conversation, KnowledgeDocument } from "@/lib/types";
 
 const PdfSourceViewer = dynamic(
   () =>
@@ -101,11 +103,21 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const [agentForm, setAgentForm] = useState(blankAgent);
   const [playgroundAgent, setPlaygroundAgent] = useState<Agent | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
   const [viewer, setViewer] = useState<{
     documentId: string;
     documentName: string;
+    page: number | null;
+  } | null>(null);
+  const [sourcePreview, setSourcePreview] = useState<{
+    documentId: string;
+    documentName: string;
+    chunkId?: string;
     page: number | null;
   } | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -367,60 +379,322 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     }
   }
 
-  function openPlayground(agent: Agent) {
+  async function refreshConversations(agentId: string) {
+    const response = await fetch(
+      `/api/conversations?agentId=${encodeURIComponent(agentId)}`,
+    );
+    const data = await response.json();
+    if (response.ok && Array.isArray(data)) {
+      setConversations(data);
+      return data as Conversation[];
+    }
+    return [];
+  }
+
+  async function loadConversation(conversationId: string) {
+    setConversationLoading(true);
+    try {
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(conversationId)}`,
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Sohbet açılamadı.");
+      setActiveConversationId(data.conversation.id);
+      setChat(Array.isArray(data.messages) ? data.messages : []);
+      setDebugOpen(false);
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Sohbet açılamadı.");
+    } finally {
+      setConversationLoading(false);
+    }
+  }
+
+  async function openPlayground(agent: Agent) {
     setPlaygroundAgent(agent);
+    setChat([]);
+    setConversations([]);
+    setActiveConversationId(null);
+    setMessage("");
+    setDebugOpen(false);
+    setConversationLoading(true);
+
+    try {
+      const list = await refreshConversations(agent.id);
+      if (list[0]) {
+        await loadConversation(list[0].id);
+      }
+    } finally {
+      setConversationLoading(false);
+    }
+  }
+
+  function startNewConversation() {
+    if (sending) abortRef.current?.abort();
+    setActiveConversationId(null);
     setChat([]);
     setMessage("");
     setDebugOpen(false);
   }
 
-  function openSource(documentId: string, documentName: string, page: number | null) {
-    const document = documents.find((item) => item.id === documentId);
-    if (!document || document.extension !== ".pdf") {
-      flash("PDF görüntüleyici yalnızca PDF kaynaklarında kullanılabilir.");
+  async function removeConversation(conversation: Conversation) {
+    if (!window.confirm(`"${conversation.title}" sohbetini silmek istediğinizden emin misiniz?`)) return;
+
+    const response = await fetch(
+      `/api/conversations/${encodeURIComponent(conversation.id)}`,
+      { method: "DELETE" },
+    );
+
+    if (!response.ok) {
+      flash("Sohbet silinemedi.");
       return;
     }
 
-    setViewer({
+    const next = conversations.filter((item) => item.id !== conversation.id);
+    setConversations(next);
+
+    if (activeConversationId === conversation.id) {
+      if (next[0]) await loadConversation(next[0].id);
+      else startNewConversation();
+    }
+  }
+
+  function openSource(
+    documentId: string,
+    documentName: string,
+    page: number | null,
+    chunkId?: string,
+  ) {
+    const document = documents.find((item) => item.id === documentId);
+    if (!document) {
+      flash("Kaynak belge bulunamadı.");
+      return;
+    }
+
+    if (document.extension === ".pdf") {
+      setViewer({
+        documentId,
+        documentName: document.originalName || documentName,
+        page,
+      });
+      return;
+    }
+
+    setSourcePreview({
       documentId,
       documentName: document.originalName || documentName,
+      chunkId,
       page,
     });
   }
 
-  async function sendMessage(event: FormEvent) {
-    event.preventDefault();
-    if (!playgroundAgent || !message.trim() || sending) return;
+  function updateConversationList(conversation: Conversation) {
+    setConversations((current) => {
+      const without = current.filter((item) => item.id !== conversation.id);
+      return [conversation, ...without].sort((a, b) =>
+        b.updatedAt.localeCompare(a.updatedAt),
+      );
+    });
+  }
 
-    const userMessage: ChatMessage = { role: "user", content: message.trim() };
-    const history = chat;
-    setChat((current) => [...current, userMessage]);
-    setMessage("");
+  async function sendChatMessage(text: string, regenerate = false) {
+    if (!playgroundAgent || sending) return;
+    if (!text.trim() && !regenerate) return;
+
+    const normalized = text.trim();
+    const tempAssistantId = `stream-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const tempUserId = `user-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    if (regenerate) {
+      setChat((current) => {
+        const lastAssistant = [...current]
+          .map((item, index) => ({ item, index }))
+          .reverse()
+          .find(({ item }) => item.role === "assistant");
+
+        const base =
+          lastAssistant !== undefined
+            ? current.slice(0, lastAssistant.index)
+            : current;
+
+        return [
+          ...base,
+          {
+            id: tempAssistantId,
+            role: "assistant",
+            content: "",
+            streaming: true,
+          },
+        ];
+      });
+    } else {
+      setChat((current) => [
+        ...current,
+        {
+          id: tempUserId,
+          role: "user",
+          content: normalized,
+        },
+        {
+          id: tempAssistantId,
+          role: "assistant",
+          content: "",
+          streaming: true,
+        },
+      ]);
+      setMessage("");
+    }
+
     setSending(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           agentId: playgroundAgent.id,
-          message: userMessage.content,
-          history,
+          message: normalized,
+          conversationId: activeConversationId,
+          regenerate,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Yanıt alınamadı.");
-      setChat((current) => [...current, { role: "assistant", content: data.reply, sources: Array.isArray(data.sources) ? data.sources : [], debug: data.debug }]);
+
+      if (!response.ok || !response.body) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || "Yanıt alınamadı.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).trim();
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf("\n");
+
+          if (!line) continue;
+
+          const event = JSON.parse(line) as {
+            type: "meta" | "delta" | "done" | "error";
+            delta?: string;
+            error?: string;
+            conversation?: Conversation;
+            userMessage?: ChatMessage;
+            message?: ChatMessage;
+            sources?: ChatMessage["sources"];
+            debug?: ChatMessage["debug"];
+          };
+
+          if (event.type === "meta") {
+            if (event.conversation) {
+              setActiveConversationId(event.conversation.id);
+              updateConversationList(event.conversation);
+            }
+
+            if (!regenerate && event.userMessage) {
+              setChat((current) =>
+                current.map((item) =>
+                  item.id === tempUserId ? event.userMessage! : item,
+                ),
+              );
+            }
+
+            setChat((current) =>
+              current.map((item) =>
+                item.id === tempAssistantId
+                  ? {
+                      ...item,
+                      conversationId: event.conversation?.id,
+                      sources: event.sources || [],
+                      debug: event.debug,
+                    }
+                  : item,
+              ),
+            );
+          } else if (event.type === "delta" && event.delta) {
+            setChat((current) =>
+              current.map((item) =>
+                item.id === tempAssistantId
+                  ? { ...item, content: item.content + event.delta }
+                  : item,
+              ),
+            );
+          } else if (event.type === "done" && event.message) {
+            setChat((current) =>
+              current.map((item) =>
+                item.id === tempAssistantId
+                  ? { ...event.message!, streaming: false }
+                  : item,
+              ),
+            );
+
+            if (event.conversation) updateConversationList(event.conversation);
+          } else if (event.type === "error") {
+            throw new Error(event.error || "Yanıt sırasında hata oluştu.");
+          }
+        }
+      }
+
+      await refreshConversations(playgroundAgent.id);
     } catch (error) {
-      setChat((current) => [
-        ...current,
-        {
-          role: "assistant",
-          content: error instanceof Error ? error.message : "Bir hata oluştu.",
-        },
-      ]);
+      const aborted = controller.signal.aborted;
+
+      setChat((current) =>
+        current.map((item) =>
+          item.id === tempAssistantId
+            ? {
+                ...item,
+                streaming: false,
+                content:
+                  item.content ||
+                  (aborted
+                    ? "Yanıt durduruldu."
+                    : error instanceof Error
+                      ? error.message
+                      : "Bir hata oluştu."),
+              }
+            : item,
+        ),
+      );
     } finally {
+      if (abortRef.current === controller) abortRef.current = null;
       setSending(false);
+    }
+  }
+
+  function sendMessage(event: FormEvent) {
+    event.preventDefault();
+    if (!message.trim()) return;
+    void sendChatMessage(message);
+  }
+
+  function stopResponse() {
+    abortRef.current?.abort();
+  }
+
+  function regenerateLastResponse() {
+    if (sending || !activeConversationId) return;
+    const lastUser = [...chat].reverse().find((item) => item.role === "user");
+    if (!lastUser) return;
+    void sendChatMessage(lastUser.content, true);
+  }
+
+  async function copyMessage(content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      flash("Yanıt panoya kopyalandı.");
+    } catch {
+      flash("Yanıt kopyalanamadı.");
     }
   }
 
@@ -909,8 +1183,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
 
       {playgroundAgent && (
         <div className="modal-layer playground-layer" role="dialog" aria-modal="true">
-          <button className="modal-backdrop" onClick={() => setPlaygroundAgent(null)} aria-label="Playground'u kapat" />
-          <section className="playground">
+          <button
+            className="modal-backdrop"
+            onClick={() => {
+              abortRef.current?.abort();
+              setPlaygroundAgent(null);
+            }}
+            aria-label="Playground'u kapat"
+          />
+          <section className="playground playground-v2">
             <header className="playground-head">
               <div className="agent-icon">{playgroundAgent.emoji}</div>
               <div>
@@ -925,144 +1206,333 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   RAG Debug
                 </button>
               )}
-              <button className="close-button" onClick={() => setPlaygroundAgent(null)}>×</button>
+              <button
+                className="close-button"
+                onClick={() => {
+                  abortRef.current?.abort();
+                  setPlaygroundAgent(null);
+                }}
+              >
+                ×
+              </button>
             </header>
-            {debugOpen && latestDebug && (
-              <aside className="rag-debug-panel">
-                <div className="rag-debug-head">
+
+            <div className="playground-workspace">
+              <aside className="conversation-sidebar">
+                <div className="conversation-sidebar-head">
                   <div>
-                    <span className="eyebrow accent">RETRIEVAL TRACE</span>
-                    <strong>RAG Debug</strong>
+                    <span className="eyebrow">SOHBETLER</span>
+                    <strong>Geçmiş</strong>
                   </div>
-                  <button className="close-button" onClick={() => setDebugOpen(false)}>×</button>
+                  <button
+                    className="conversation-new"
+                    onClick={startNewConversation}
+                    title="Yeni sohbet"
+                  >
+                    <Icon name="plus" size={15} />
+                  </button>
                 </div>
-                <div className="rag-debug-body">
-                  <div className="debug-query">
-                    <span>Sorgu</span>
-                    <strong>{latestDebug.query}</strong>
-                  </div>
-                  <div className="debug-stats">
-                    <div><span>Belge</span><strong>{latestDebug.assignedDocumentCount}</strong></div>
-                    <div><span>Chunk</span><strong>{latestDebug.indexedChunkCount}</strong></div>
-                    <div><span>Seçilen token</span><strong>{latestDebug.selectedTokenCount}</strong></div>
-                    <div><span>Toplam süre</span><strong>{latestDebug.timings.totalMs} ms</strong></div>
-                  </div>
-                  <div className="debug-timing">
-                    Embedding {latestDebug.timings.embeddingMs} ms · retrieval {latestDebug.timings.retrievalMs} ms
-                  </div>
-                  <div className="debug-section">
-                    <div className="debug-section-title">
-                      <strong>Final seçim</strong>
-                      <span>{latestDebug.selectedCandidates.length} chunk</span>
+
+                <div className="conversation-list">
+                  {conversationLoading && conversations.length === 0 ? (
+                    <div className="conversation-empty">Sohbetler yükleniyor…</div>
+                  ) : conversations.length === 0 ? (
+                    <div className="conversation-empty">
+                      İlk mesajını gönderdiğinde sohbet burada kaydedilecek.
                     </div>
-                    {latestDebug.selectedCandidates.length === 0 ? (
-                      <p className="debug-empty">Bu sorgu için kaynak seçilmedi.</p>
-                    ) : (
-                      <div className="debug-candidates">
-                        {latestDebug.selectedCandidates.map((candidate, index) => (
-                          <button
-                            key={candidate.chunkId}
-                            onClick={() =>
-                              openSource(
-                                candidate.documentId,
-                                candidate.documentName,
-                                candidate.pageStart,
-                              )
-                            }
-                          >
-                            <span className="debug-rank">#{index + 1}</span>
-                            <span className="debug-candidate-main">
-                              <strong>
-                                {candidate.documentName}
-                                {candidate.pageStart ? ` · s.${candidate.pageStart}` : ""}
-                              </strong>
-                              <small>
-                                {candidate.semanticScore !== undefined
-                                  ? `semantic ${candidate.semanticScore.toFixed(3)} · `
-                                  : ""}
-                                {candidate.keywordRank
-                                  ? `keyword #${candidate.keywordRank} · `
-                                  : ""}
-                                final {candidate.finalScore?.toFixed(4) || "—"}
-                              </small>
-                              {candidate.extractionMethod === "ocr" && (
-                                <small>
-                                  OCR
-                                  {candidate.ocrConfidence !== null
-                                    ? ` · güven %${candidate.ocrConfidence}`
-                                    : ""}
-                                </small>
-                              )}
-                            </span>
-                          </button>
-                        ))}
+                  ) : (
+                    conversations.map((conversation) => (
+                      <div
+                        className={`conversation-item ${activeConversationId === conversation.id ? "active" : ""}`}
+                        key={conversation.id}
+                      >
+                        <button
+                          className="conversation-open"
+                          onClick={() => void loadConversation(conversation.id)}
+                        >
+                          <strong>{conversation.title}</strong>
+                        </button>
+                        <button
+                          className="conversation-delete"
+                          onClick={() => void removeConversation(conversation)}
+                          aria-label="Sohbeti sil"
+                          title="Sohbeti sil"
+                        >
+                          ×
+                        </button>
                       </div>
-                    )}
-                  </div>
-                  <div className="debug-foot">
-                    Semantic aday: {latestDebug.semanticCandidates.length} · keyword aday: {latestDebug.keywordCandidates.length}
-                  </div>
+                    ))
+                  )}
                 </div>
               </aside>
-            )}
-            <div className="chat-body">
-              {chat.length === 0 ? (
-                <div className="chat-empty">
-                  <div className="empty-spark">✦</div>
-                  <h3>Ajanı test et</h3>
-                  <p>Gerçek bir müşteri gibi mesaj gönder. Ajan işletme profili ve kendisine bağlanan bilgi kaynaklarından ilgili parçaları kullanacak.</p>
-                  <div className="suggestions">
-                    {["Bana işletmenizi kısaca anlat.", "Hangi hizmetleri sunuyorsunuz?", "Neden sizi tercih etmeliyim?"].map((text) => (
-                      <button key={text} onClick={() => setMessage(text)}>{text}</button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="messages">
-                  {chat.map((item, index) => (
-                    <div key={index} className={`message ${item.role}`}>
-                      <span>{item.role === "assistant" ? playgroundAgent.emoji : "Siz"}</span>
-                      <div className="message-content">
-                        <p>{item.content}</p>
-                        {item.role === "assistant" && item.sources && item.sources.length > 0 && (
-                          <div className="message-sources">
-                            <strong>Kaynaklar</strong>
-                            <div>
-                              {item.sources.map((source, sourceIndex) => (
-                                <button
-                                  className="source-chip"
-                                  key={`${source.documentId}-${source.pageStart}-${sourceIndex}`}
-                                  onClick={() =>
-                                    openSource(
-                                      source.documentId,
-                                      source.documentName,
-                                      source.pageStart,
-                                    )
-                                  }
-                                >
-                                  {source.documentName}
-                                  {source.pageStart ? ` · s.${source.pageStart}` : ""}
-                                  {source.extractionMethod === "ocr" ? " · OCR" : ""}
-                                  {source.ocrConfidence !== null &&
-                                  source.ocrConfidence !== undefined
-                                    ? ` %${source.ocrConfidence}`
-                                    : ""}
-                                </button>
-                              ))}
-                            </div>
+
+              <div className="playground-chat-panel">
+                {debugOpen && latestDebug && (
+                  <aside className="rag-debug-panel rag-debug-v2">
+                    <div className="rag-debug-head">
+                      <div>
+                        <span className="eyebrow accent">RETRIEVAL TRACE</span>
+                        <strong>RAG Debug</strong>
+                      </div>
+                      <button className="close-button" onClick={() => setDebugOpen(false)}>×</button>
+                    </div>
+
+                    <div className="rag-debug-body">
+                      <div className="debug-query">
+                        <span>Sorgu</span>
+                        <strong>{latestDebug.query}</strong>
+                      </div>
+
+                      <div className="debug-confidence-row">
+                        <span className={`confidence-pill confidence-${latestDebug.confidence}`}>
+                          {latestDebug.confidence === "high"
+                            ? "Yüksek güven"
+                            : latestDebug.confidence === "medium"
+                              ? "Orta güven"
+                              : latestDebug.confidence === "low"
+                                ? "Düşük güven"
+                                : "Kaynak yok"}
+                        </span>
+                        <small>semantic eşik {latestDebug.semanticThreshold.toFixed(2)}</small>
+                      </div>
+
+                      <div className="debug-stats">
+                        <div><span>Belge</span><strong>{latestDebug.assignedDocumentCount}</strong></div>
+                        <div><span>Chunk</span><strong>{latestDebug.indexedChunkCount}</strong></div>
+                        <div><span>Seçilen token</span><strong>{latestDebug.selectedTokenCount}</strong></div>
+                        <div><span>Toplam süre</span><strong>{latestDebug.timings.totalMs} ms</strong></div>
+                      </div>
+
+                      <div className="debug-timing">
+                        Embedding {latestDebug.timings.embeddingMs} ms · retrieval {latestDebug.timings.retrievalMs} ms
+                      </div>
+
+                      <div className="debug-section">
+                        <div className="debug-section-title">
+                          <strong>Final seçim</strong>
+                          <span>{latestDebug.selectedCandidates.length} chunk</span>
+                        </div>
+
+                        {latestDebug.selectedCandidates.length === 0 ? (
+                          <p className="debug-empty">
+                            Relevance eşiğini geçen kaynak bulunamadı.
+                          </p>
+                        ) : (
+                          <div className="debug-candidates">
+                            {latestDebug.selectedCandidates.map((candidate, index) => (
+                              <button
+                                key={candidate.chunkId}
+                                onClick={() =>
+                                  openSource(
+                                    candidate.documentId,
+                                    candidate.documentName,
+                                    candidate.pageStart,
+                                    candidate.chunkId,
+                                  )
+                                }
+                              >
+                                <span className="debug-rank">#{index + 1}</span>
+                                <span className="debug-candidate-main">
+                                  <strong>
+                                    {candidate.documentName}
+                                    {candidate.pageStart ? ` · s.${candidate.pageStart}` : ""}
+                                  </strong>
+                                  <small>
+                                    {candidate.semanticScore !== undefined
+                                      ? `semantic ${candidate.semanticScore.toFixed(3)} · `
+                                      : ""}
+                                    {candidate.keywordRank
+                                      ? `keyword #${candidate.keywordRank} · `
+                                      : ""}
+                                    final {candidate.finalScore?.toFixed(4) || "—"}
+                                  </small>
+                                  {candidate.selectionReason && (
+                                    <small>seçim: {candidate.selectionReason}</small>
+                                  )}
+                                  {candidate.preview && (
+                                    <span className="debug-preview">{candidate.preview}</span>
+                                  )}
+                                </span>
+                              </button>
+                            ))}
                           </div>
                         )}
                       </div>
+
+                      {latestDebug.rejectedCandidates.length > 0 && (
+                        <div className="debug-section">
+                          <div className="debug-section-title">
+                            <strong>Elenen adaylar</strong>
+                            <span>{latestDebug.rejectedCandidates.length}</span>
+                          </div>
+                          <div className="debug-rejected">
+                            {latestDebug.rejectedCandidates.slice(0, 6).map((candidate) => (
+                              <div key={`rejected-${candidate.chunkId}-${candidate.rejectedReason}`}>
+                                <strong>
+                                  {candidate.documentName}
+                                  {candidate.pageStart ? ` · s.${candidate.pageStart}` : ""}
+                                </strong>
+                                <span>{candidate.rejectedReason || "elendi"}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="debug-foot">
+                        Semantic aday: {latestDebug.semanticCandidates.length} · keyword aday: {latestDebug.keywordCandidates.length}
+                      </div>
                     </div>
-                  ))}
-                  {sending && <div className="message assistant"><span>{playgroundAgent.emoji}</span><p className="typing">Yanıt hazırlanıyor<span>...</span></p></div>}
+                  </aside>
+                )}
+
+                <div className="chat-body">
+                  {conversationLoading ? (
+                    <div className="chat-empty">
+                      <div className="empty-spark">✦</div>
+                      <h3>Sohbet yükleniyor</h3>
+                    </div>
+                  ) : chat.length === 0 ? (
+                    <div className="chat-empty">
+                      <div className="empty-spark">✦</div>
+                      <h3>Yeni sohbet</h3>
+                      <p>
+                        Mesaj gönderdiğinde sohbet bu ajan için yerel olarak kaydedilir.
+                        Ajan yalnızca kendisine bağlanan bilgi kaynaklarından ilgili
+                        parçaları kullanır.
+                      </p>
+                      <div className="suggestions">
+                        {[
+                          "Bana işletmenizi kısaca anlat.",
+                          "Hangi hizmetleri sunuyorsunuz?",
+                          "Neden sizi tercih etmeliyim?",
+                        ].map((text) => (
+                          <button key={text} onClick={() => setMessage(text)}>
+                            {text}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="messages">
+                      {chat.map((item, index) => {
+                        const isLastAssistant =
+                          item.role === "assistant" &&
+                          index === chat.length - 1;
+
+                        return (
+                          <div
+                            key={item.id || index}
+                            className={`message ${item.role}`}
+                          >
+                            <span>
+                              {item.role === "assistant"
+                                ? playgroundAgent.emoji
+                                : "Siz"}
+                            </span>
+
+                            <div className="message-content">
+                              {item.role === "assistant" ? (
+                                item.content ? (
+                                  <MarkdownMessage content={item.content} />
+                                ) : (
+                                  <p className="typing">
+                                    Yanıt hazırlanıyor<span>...</span>
+                                  </p>
+                                )
+                              ) : (
+                                <p>{item.content}</p>
+                              )}
+
+                              {item.role === "assistant" &&
+                                item.sources &&
+                                item.sources.length > 0 && (
+                                  <div className="message-sources">
+                                    <strong>Kaynaklar</strong>
+                                    <div>
+                                      {item.sources.map((source, sourceIndex) => (
+                                        <button
+                                          className="source-chip"
+                                          key={`${source.documentId}-${source.chunkId || source.pageStart}-${sourceIndex}`}
+                                          onClick={() =>
+                                            openSource(
+                                              source.documentId,
+                                              source.documentName,
+                                              source.pageStart,
+                                              source.chunkId,
+                                            )
+                                          }
+                                        >
+                                          {source.documentName}
+                                          {source.pageStart
+                                            ? ` · s.${source.pageStart}`
+                                            : ""}
+                                          {source.extractionMethod === "ocr"
+                                            ? " · OCR"
+                                            : ""}
+                                          {source.ocrConfidence !== null &&
+                                          source.ocrConfidence !== undefined
+                                            ? ` %${source.ocrConfidence}`
+                                            : ""}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                              {item.role === "assistant" &&
+                                item.content &&
+                                !item.streaming && (
+                                  <div className="message-actions">
+                                    <button
+                                      onClick={() => void copyMessage(item.content)}
+                                    >
+                                      Kopyala
+                                    </button>
+                                    {isLastAssistant &&
+                                      activeConversationId &&
+                                      !sending && (
+                                        <button onClick={regenerateLastResponse}>
+                                          Yeniden oluştur
+                                        </button>
+                                      )}
+                                  </div>
+                                )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              )}
+
+                <form className="chat-input" onSubmit={sendMessage}>
+                  <input
+                    value={message}
+                    onChange={(event) => setMessage(event.target.value)}
+                    placeholder="Bir mesaj yazın..."
+                    disabled={sending}
+                  />
+                  {sending ? (
+                    <button
+                      type="button"
+                      className="stop-button"
+                      onClick={stopResponse}
+                      aria-label="Yanıtı durdur"
+                    >
+                      ■
+                    </button>
+                  ) : (
+                    <button
+                      disabled={!message.trim()}
+                      aria-label="Gönder"
+                    >
+                      <Icon name="send" />
+                    </button>
+                  )}
+                </form>
+              </div>
             </div>
-            <form className="chat-input" onSubmit={sendMessage}>
-              <input value={message} onChange={(event) => setMessage(event.target.value)} placeholder="Bir mesaj yazın..." />
-              <button disabled={!message.trim() || sending} aria-label="Gönder"><Icon name="send" /></button>
-            </form>
           </section>
         </div>
       )}
@@ -1073,6 +1543,16 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
           documentName={viewer.documentName}
           initialPage={viewer.page}
           onClose={() => setViewer(null)}
+        />
+      )}
+
+      {sourcePreview && (
+        <TextSourceViewer
+          documentId={sourcePreview.documentId}
+          documentName={sourcePreview.documentName}
+          chunkId={sourcePreview.chunkId}
+          page={sourcePreview.page}
+          onClose={() => setSourcePreview(null)}
         />
       )}
 

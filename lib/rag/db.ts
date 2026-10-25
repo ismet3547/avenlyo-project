@@ -421,6 +421,12 @@ export function getChunksForDocuments(documentIds: string[]): StoredChunk[] {
   return rows.map(mapChunk);
 }
 
+const FTS_STOP_WORDS = new Set([
+  "ve", "ile", "bir", "bu", "şu", "için", "gibi", "mi", "mı", "mu", "mü",
+  "ne", "nasıl", "hangi", "olarak", "daha", "çok", "az", "the", "and", "or",
+  "for", "with", "what", "which", "how", "is", "are", "of", "to", "in",
+]);
+
 export function searchKnowledgeFts(
   query: string,
   documentIds: string[],
@@ -432,7 +438,8 @@ export function searchKnowledgeFts(
     query
       .toLocaleLowerCase("tr")
       .match(/[\p{L}\p{N}_-]{2,}/gu)
-      ?.slice(0, 12) ?? [];
+      ?.filter((term) => !FTS_STOP_WORDS.has(term))
+      .slice(0, 12) ?? [];
 
   if (!terms.length) return [];
 
