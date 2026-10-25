@@ -1222,14 +1222,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 <div className="conversation-sidebar-head">
                   <div>
                     <span className="eyebrow">SOHBETLER</span>
-                    <strong>Geçmiş</strong>
+                    <strong>Sohbet geçmişi</strong>
                   </div>
                   <button
                     className="conversation-new"
                     onClick={startNewConversation}
                     title="Yeni sohbet"
                   >
-                    <Icon name="plus" size={15} />
+                    <Icon name="plus" size={14} />
+                    <span>Yeni sohbet</span>
                   </button>
                 </div>
 
