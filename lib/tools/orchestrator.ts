@@ -42,6 +42,7 @@ export async function handleModelFunctionCall(input: {
   conversationId: string;
   messageId?: string | null;
   call: ModelFunctionCall;
+  onActivity?: (activity: ToolActivity) => void;
 }): Promise<ToolCallOutcome> {
   const definition = getRegisteredTool(input.call.name);
 
@@ -176,6 +177,18 @@ export async function handleModelFunctionCall(input: {
   });
 
   markToolRunRunning(run.id);
+  input.onActivity?.({
+    id: run.id,
+    toolRunId: run.id,
+    toolName: definition.name,
+    displayName: definition.displayName,
+    status: "running",
+    summary:
+      definition.name === "lookup_order"
+        ? "Sipariş durumu sorgulanıyor…"
+        : "Araç çalıştırılıyor…",
+    arguments: decision.arguments as Record<string, unknown>,
+  });
   const attemptStartedAt = new Date().toISOString();
 
   appendToolAuditEvent({
