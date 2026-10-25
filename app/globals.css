@@ -252,7 +252,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   text-align: left;
 }
 .profile-score span { display: block; color: var(--muted); font-size: 12px; }
-.profile-score strong { display: block; font-size: 29px; margin-top: 4px; color: #566446; }
+.profile-score strong { display: block; font-size: 29px; margin-top: 4px; color: var(--accent); }
 
 .business-form { display: grid; gap: 16px; padding-bottom: 96px; }
 .form-card {
