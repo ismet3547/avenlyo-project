@@ -714,10 +714,29 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                           <span>{formatBytes(document.size)}</span>
                           {document.pageCount && <span>{document.pageCount} sayfa</span>}
                           <span>{document.chunkCount} parça</span>
+                          {document.extractionMethod === "ocr" && (
+                            <span>OCR · {document.ocrPageCount} sayfa</span>
+                          )}
+                          {document.extractionMethod === "mixed" && (
+                            <span>Native + OCR · {document.ocrPageCount} sayfa OCR</span>
+                          )}
+                          {document.extractionMethod === "native" && (
+                            <span>Native text</span>
+                          )}
                         </div>
                         {document.error && <p className="document-error">{document.error}</p>}
                       </div>
                       <div className="document-actions">
+                        {document.extension === ".pdf" && document.status === "ready" && (
+                          <button
+                            className="document-view-button"
+                            onClick={() =>
+                              openSource(document.id, document.originalName, 1)
+                            }
+                          >
+                            Görüntüle
+                          </button>
+                        )}
                         <button
                           className="icon-button"
                           onClick={() => void reindexKnowledgeDocument(document)}
