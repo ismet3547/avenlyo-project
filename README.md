@@ -41,6 +41,11 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 AVENLYO_RAG_DEBUG=false
 AVENLYO_OCR_LANGS=tur,eng
 AVENLYO_RAG_SEMANTIC_MIN=0.22
+AVENLYO_TOOLS_ENABLED=false
+AVENLYO_TOOL_READS_ENABLED=true
+AVENLYO_TOOL_WRITES_ENABLED=false
+AVENLYO_TOOL_DESTRUCTIVE_ENABLED=false
+AVENLYO_TOOL_DRY_RUN=true
 ```
 
 Ardından:
@@ -117,6 +122,47 @@ gönderilir.
 
 Chat tarafında her istekte tüm geçmiş yerine son 12 mesaj kullanılır. Responses API çağrıları `store: false` ile yapılır; sohbet geçmişinin ürün içi kalıcı kopyası yalnızca yerel SQLite veritabanında tutulur.
 
+## Tools / Actions Foundation
+
+Tools V1 altyapısı güvenli varsayılanlarla hazırlanmıştır; bu aşamada chat henüz tool çağırmaz ve gerçek side-effect executor'ları bağlı değildir.
+
+Yerel SQLite içinde şu tablolar bulunur:
+
+- `tools`: kod kontrollü built-in tool metadata ve strict JSON Schema
+- `agent_tools`: ajan → tool yetkilendirmesi
+- `tool_runs`: gelecekteki execution state, argument hash ve idempotency metadata
+- `tool_approvals`: write/destructive onay kayıtları
+- `tool_run_attempts`: retry/attempt metadata
+- `tool_audit_events`: secret-redacted yerel audit olayları
+
+İlk registry tanımları:
+
+- `lookup_order`: read-only, onay gerektirmez
+- `create_crm_contact`: write, kullanıcı onayı gerektirir
+
+Bu araçlar henüz çalıştırılmaz; executor ve Responses function-call loop sonraki aşamada eklenecektir.
+
+Foundation API'leri:
+
+- `GET /api/tools`: tool kataloğu + güvenlik flag/limitleri
+- `PATCH /api/tools`: built-in tool enable/disable
+- `GET /api/agents/:id/tools`: ajana atanmış tool kimlikleri
+- `PUT /api/agents/:id/tools`: ajan tool izinlerini güncelleme
+
+Tool input şemalarının tek kaynağı Zod'dur. OpenAI strict function calling ile uyum için object şemaları `additionalProperties: false` ve tüm properties required olacak şekilde doğrulanır. Runtime'da model argümanları aynı Zod şemalarıyla yeniden parse edilmeden execution aşamasına geçemez.
+
+Güvenli varsayılanlar:
+
+```env
+AVENLYO_TOOLS_ENABLED=false
+AVENLYO_TOOL_READS_ENABLED=true
+AVENLYO_TOOL_WRITES_ENABLED=false
+AVENLYO_TOOL_DESTRUCTIVE_ENABLED=false
+AVENLYO_TOOL_DRY_RUN=true
+```
+
+Bu sayede sonraki executor entegrasyonunda model tool önerebilse bile Avenlyo'nun local policy katmanı izin vermeden işlem gerçekleştirilemez.
+
 ## Mimari
 
 - **Next.js App Router + TypeScript**
@@ -135,6 +181,7 @@ Chat tarafında her istekte tüm geçmiş yerine son 12 mesaj kullanılır. Resp
 - **Mammoth**: DOCX metin çıkarma
 - **js-tiktoken**: token tabanlı chunking
 - **Local JSON Store**: işletme profili ve ajan ayarları
+- **Tools Foundation**: Zod tabanlı strict tool registry, ajan-tool izinleri, policy engine ve yerel audit tabloları
 
 Çalışma anında oluşturulan `data/avenlyo.json`, `data/knowledge.db` ve `data/uploads/` Git'e eklenmez.
 
