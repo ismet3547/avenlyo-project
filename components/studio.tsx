@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { PdfSourceViewer } from "@/components/pdf-source-viewer";
 import type { Agent, BusinessProfile, ChatMessage, KnowledgeDocument } from "@/lib/types";
 
 type View = "overview" | "business" | "knowledge" | "agents";
@@ -94,6 +95,12 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  const [viewer, setViewer] = useState<{
+    documentId: string;
+    documentName: string;
+    page: number | null;
+  } | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -124,6 +131,10 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   }, [business]);
 
   const profilePercent = Math.round((completedFields / 8) * 100);
+  const latestDebug = useMemo(
+    () => [...chat].reverse().find((item) => item.debug)?.debug,
+    [chat],
+  );
 
   function flash(text: string) {
     setNotice(text);
@@ -352,6 +363,21 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     setPlaygroundAgent(agent);
     setChat([]);
     setMessage("");
+    setDebugOpen(false);
+  }
+
+  function openSource(documentId: string, documentName: string, page: number | null) {
+    const document = documents.find((item) => item.id === documentId);
+    if (!document || document.extension !== ".pdf") {
+      flash("PDF görüntüleyici yalnızca PDF kaynaklarında kullanılabilir.");
+      return;
+    }
+
+    setViewer({
+      documentId,
+      documentName: document.originalName || documentName,
+      page,
+    });
   }
 
   async function sendMessage(event: FormEvent) {
@@ -376,7 +402,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Yanıt alınamadı.");
-      setChat((current) => [...current, { role: "assistant", content: data.reply, sources: Array.isArray(data.sources) ? data.sources : [] }]);
+      setChat((current) => [...current, { role: "assistant", content: data.reply, sources: Array.isArray(data.sources) ? data.sources : [], debug: data.debug }]);
     } catch (error) {
       setChat((current) => [
         ...current,
