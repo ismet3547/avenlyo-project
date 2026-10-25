@@ -262,6 +262,7 @@ export async function POST(request: Request) {
           if (done) break;
 
           buffer += decoder.decode(value, { stream: true });
+          buffer = buffer.replace(/\r\n/g, "\n");
 
           let boundary = buffer.indexOf("\n\n");
           while (boundary !== -1) {
