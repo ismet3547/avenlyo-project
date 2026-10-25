@@ -79,6 +79,8 @@ export async function POST(request: Request) {
     status: "processing",
     pageCount: null,
     chunkCount: 0,
+    extractionMethod: null,
+    ocrPageCount: 0,
     error: null,
     storedPath,
     createdAt: timestamp,
