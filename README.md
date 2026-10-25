@@ -124,7 +124,7 @@ Chat tarafında her istekte tüm geçmiş yerine son 12 mesaj kullanılır. Resp
 
 ## Tools / Actions Foundation
 
-Tools V1 altyapısı güvenli varsayılanlarla çalışır. İlk read-only executor olan `lookup_order`, OpenAI Responses function calling ile Playground'a bağlanmıştır. Write tool'lar henüz çalıştırılmaz.
+Tools V1 altyapısı güvenli varsayılanlarla çalışır. `lookup_order` read-only olarak doğrudan çalışır; `create_crm_contact` ise human approval + argument hash + idempotency korumasıyla local CRM'e yazabilir.
 
 Yerel SQLite içinde şu tablolar bulunur:
 
@@ -138,7 +138,7 @@ Yerel SQLite içinde şu tablolar bulunur:
 İlk registry tanımları:
 
 - `lookup_order`: read-only, onay gerektirmez, local demo executor hazır
-- `create_crm_contact`: write, kullanıcı onayı gerektirir, executor henüz bağlı değildir
+- `create_crm_contact`: write, her zaman kullanıcı onayı gerektirir, idempotent local CRM executor hazır
 
 `lookup_order` akışı:
 
@@ -154,6 +154,44 @@ Kullanıcı
 ```
 
 Tool call sonucu, run/attempt/audit metadata ile yerel SQLite'a kaydedilir. Chat içinde Tool Activity kartı görünür ve sohbet geçmişiyle birlikte kalıcıdır.
+
+### Write approval akışı
+
+`create_crm_contact` çağrısında model yalnız öneri üretir. Avenlyo çağrıyı hemen çalıştırmaz:
+
+```text
+function_call
+→ Zod + permission + write policy
+→ tool_run + SHA-256 arguments hash
+→ pending approval
+→ kullanıcı Onayla / Reddet
+→ hash + permission + kill-switch tekrar kontrolü
+→ atomic execution claim
+→ idempotency key
+→ local CRM write
+→ function_call_output
+→ final model cevabı
+```
+
+Client onay sırasında argümanları yeniden göndermez; yalnız `toolRunId` ve approve/reject kararı gönderir. Gerçek argümanlar server-side kayıttan okunur. Aynı run ikinci kez onaylanırsa ikinci side-effect oluşmaz.
+
+Varsayılan `AVENLYO_TOOL_DRY_RUN=true` iken approval akışı uçtan uca çalışır fakat gerçek CRM satırı oluşturulmaz. Gerçek local CRM write testi için dry-run ayrıca kapatılmalıdır.
+
+```env
+AVENLYO_TOOLS_ENABLED=true
+AVENLYO_TOOL_WRITES_ENABLED=true
+AVENLYO_TOOL_DRY_RUN=true
+```
+
+Güvenli ilk test: ajana **CRM müşterisi oluştur** aracını ata ve Playground'da bir müşteri eklemesini iste. Approval kartında bilgileri kontrol et; onay sonrası kart `Dry-run tamamlandı` demelidir.
+
+Gerçek local write testi için:
+
+```env
+AVENLYO_TOOL_DRY_RUN=false
+```
+
+yapıp dev server'ı yeniden başlatın. Onaylanan işlem bir `CRM-...` kimliği döndürür.
 
 ### lookup_order test verisi
 
@@ -212,7 +250,7 @@ Bu sayede model bir tool çağrısı üretse bile Avenlyo'nun local policy katma
 - **Mammoth**: DOCX metin çıkarma
 - **js-tiktoken**: token tabanlı chunking
 - **Local JSON Store**: işletme profili ve ajan ayarları
-- **Tools Runtime**: Zod tabanlı strict tool registry, ajan-tool izinleri, policy engine, read-only local executor, tool run/audit ve Responses function-call loop
+- **Tools Runtime**: Zod tabanlı strict tool registry, ajan-tool izinleri, policy engine, read/write local executor'lar, approval state machine, idempotency, tool run/audit ve Responses function-call loop
 
 Çalışma anında oluşturulan `data/avenlyo.json`, `data/knowledge.db` ve `data/uploads/` Git'e eklenmez.
 
