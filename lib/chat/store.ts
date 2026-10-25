@@ -130,6 +130,10 @@ export function deleteConversation(id: string) {
   return db().prepare("DELETE FROM conversations WHERE id = ?").run(id).changes > 0;
 }
 
+export function deleteAgentConversations(agentId: string) {
+  return db().prepare("DELETE FROM conversations WHERE agent_id = ?").run(agentId).changes;
+}
+
 export function listConversationMessages(conversationId: string): ChatMessage[] {
   return (
     db()
