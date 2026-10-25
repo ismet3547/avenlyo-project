@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { TextSourceViewer } from "@/components/text-source-viewer";
 import type { Agent, BusinessProfile, ChatMessage, Conversation, KnowledgeDocument } from "@/lib/types";
+import type { ToolCatalogItem, ToolFeatureFlags } from "@/lib/tools/types";
 
 const PdfSourceViewer = dynamic(
   () =>
@@ -15,7 +16,7 @@ const PdfSourceViewer = dynamic(
   { ssr: false },
 );
 
-type View = "overview" | "business" | "knowledge" | "agents";
+type View = "overview" | "business" | "knowledge" | "tools" | "agents";
 
 const emptyBusiness: BusinessProfile = {
   name: "",
@@ -48,13 +49,14 @@ function Icon({
   name,
   size = 18,
 }: {
-  name: "home" | "business" | "knowledge" | "agents" | "plus" | "arrow" | "spark" | "check" | "trash" | "edit" | "send" | "menu" | "upload" | "refresh";
+  name: "home" | "business" | "knowledge" | "tools" | "agents" | "plus" | "arrow" | "spark" | "check" | "trash" | "edit" | "send" | "menu" | "upload" | "refresh";
   size?: number;
 }) {
   const paths: Record<string, React.ReactNode> = {
     home: <><path d="M3 10.8 12 3l9 7.8" /><path d="M5 9.5V21h14V9.5" /><path d="M9 21v-7h6v7" /></>,
     business: <><path d="M4 21V7l8-4 8 4v14" /><path d="M8 21v-5h8v5" /><path d="M8 10h.01M12 10h.01M16 10h.01" /></>,
     knowledge: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z" /><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20" /></>,
+    tools: <><path d="M14.7 6.3a4 4 0 0 0-5 5L4 17l3 3 5.7-5.7a4 4 0 0 0 5-5l-2.4 2.4-3-3 2.4-2.4Z" /><path d="m6.5 17.5 2 2" /></>,
     agents: <><rect x="5" y="7" width="14" height="12" rx="3" /><path d="M9 12h.01M15 12h.01M9 16h6M12 7V4M9 4h6" /></>,
     plus: <><path d="M12 5v14M5 12h14" /></>,
     arrow: <path d="m9 18 6-6-6-6" />,
@@ -91,6 +93,10 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const [business, setBusiness] = useState<BusinessProfile>(emptyBusiness);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);
+  const [toolsCatalog, setToolsCatalog] = useState<ToolCatalogItem[]>([]);
+  const [toolFlags, setToolFlags] = useState<ToolFeatureFlags | null>(null);
+  const [agentToolIds, setAgentToolIds] = useState<string[]>([]);
+  const [toolSavingId, setToolSavingId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [agentKnowledgeIds, setAgentKnowledgeIds] = useState<string[]>([]);
@@ -127,11 +133,14 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       fetch("/api/business").then((response) => response.json()),
       fetch("/api/agents").then((response) => response.json()),
       fetch("/api/knowledge").then((response) => response.json()),
+      fetch("/api/tools").then((response) => response.json()),
     ])
-      .then(([businessData, agentData, knowledgeData]) => {
+      .then(([businessData, agentData, knowledgeData, toolsData]) => {
         setBusiness(businessData);
         setAgents(agentData);
         setDocuments(Array.isArray(knowledgeData) ? knowledgeData : []);
+        setToolsCatalog(Array.isArray(toolsData?.tools) ? toolsData.tools : []);
+        setToolFlags(toolsData?.flags ?? null);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -166,6 +175,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       overview: "/",
       business: "/bilgiler",
       knowledge: "/bilgi-tabani",
+      tools: "/araclar",
       agents: "/ajanlar",
     };
     setMobileNav(false);
@@ -299,6 +309,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     setEditingId(null);
     setAgentForm(blankAgent);
     setAgentKnowledgeIds([]);
+    setAgentToolIds([]);
     setEditorOpen(true);
   }
 
@@ -313,18 +324,28 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       model: agent.model,
     });
     setAgentKnowledgeIds([]);
+    setAgentToolIds([]);
     setEditorOpen(true);
 
     try {
-      const response = await fetch(
-        `/api/agents/${encodeURIComponent(agent.id)}/knowledge`,
-      );
-      const data = await response.json();
-      if (response.ok && Array.isArray(data.documentIds)) {
-        setAgentKnowledgeIds(data.documentIds);
+      const [knowledgeResponse, toolsResponse] = await Promise.all([
+        fetch(`/api/agents/${encodeURIComponent(agent.id)}/knowledge`),
+        fetch(`/api/agents/${encodeURIComponent(agent.id)}/tools`),
+      ]);
+      const [knowledgeData, toolsData] = await Promise.all([
+        knowledgeResponse.json(),
+        toolsResponse.json(),
+      ]);
+
+      if (knowledgeResponse.ok && Array.isArray(knowledgeData.documentIds)) {
+        setAgentKnowledgeIds(knowledgeData.documentIds);
+      }
+      if (toolsResponse.ok && Array.isArray(toolsData.toolIds)) {
+        setAgentToolIds(toolsData.toolIds);
       }
     } catch {
       setAgentKnowledgeIds([]);
+      setAgentToolIds([]);
     }
   }
 
@@ -348,18 +369,22 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
         : [data, ...current],
     );
 
-    const knowledgeResponse = await fetch(
-      `/api/agents/${encodeURIComponent(data.id)}/knowledge`,
-      {
+    const [knowledgeResponse, toolsResponse] = await Promise.all([
+      fetch(`/api/agents/${encodeURIComponent(data.id)}/knowledge`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ documentIds: agentKnowledgeIds }),
-      },
-    );
+      }),
+      fetch(`/api/agents/${encodeURIComponent(data.id)}/tools`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toolIds: agentToolIds }),
+      }),
+    ]);
 
     setEditorOpen(false);
-    if (!knowledgeResponse.ok) {
-      flash("Ajan kaydedildi ancak bilgi kaynakları güncellenemedi.");
+    if (!knowledgeResponse.ok || !toolsResponse.ok) {
+      flash("Ajan kaydedildi ancak kaynak veya araç izinleri güncellenemedi.");
       return;
     }
 
@@ -377,6 +402,52 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       if (playgroundAgent?.id === agent.id) setPlaygroundAgent(null);
       flash("Ajan silindi.");
     }
+  }
+
+  async function toggleToolEnabled(tool: ToolCatalogItem) {
+    if (toolSavingId) return;
+    setToolSavingId(tool.id);
+
+    try {
+      const response = await fetch("/api/tools", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toolId: tool.id, enabled: !tool.enabled }),
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Araç durumu güncellenemedi.");
+      }
+
+      setToolsCatalog((current) =>
+        current.map((item) =>
+          item.id === tool.id ? { ...item, enabled: data.enabled } : item,
+        ),
+      );
+      flash(data.enabled ? "Araç katalogda etkinleştirildi." : "Araç katalogda devre dışı bırakıldı.");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Araç güncellenemedi.");
+    } finally {
+      setToolSavingId(null);
+    }
+  }
+
+  function toolRiskLabel(risk: ToolCatalogItem["riskLevel"]) {
+    const labels: Record<ToolCatalogItem["riskLevel"], string> = {
+      read: "Okuma · düşük risk",
+      sensitive_read: "Hassas okuma",
+      write: "Yazma · kontrollü",
+      destructive: "Yıkıcı işlem",
+      external_share: "Harici veri paylaşımı",
+    };
+    return labels[risk];
+  }
+
+  function toolApprovalLabel(policy: ToolCatalogItem["approvalPolicy"]) {
+    if (policy === "always") return "Her zaman onay";
+    if (policy === "writes") return "Yazma işlemlerinde onay";
+    return "Onay gerekmez";
   }
 
   async function refreshConversations(agentId: string) {
@@ -698,10 +769,11 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     }
   }
 
-  const navItems: { id: View; label: string; icon: "home" | "business" | "knowledge" | "agents" }[] = [
+  const navItems: { id: View; label: string; icon: "home" | "business" | "knowledge" | "tools" | "agents" }[] = [
     { id: "overview", label: "Genel Bakış", icon: "home" },
     { id: "business", label: "İşletme Bilgileri", icon: "business" },
     { id: "knowledge", label: "Bilgi Tabanı", icon: "knowledge" },
+    { id: "tools", label: "Araçlar", icon: "tools" },
     { id: "agents", label: "Ajanlar", icon: "agents" },
   ];
 
@@ -1044,6 +1116,134 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
             </section>
           )}
 
+          {view === "tools" && (
+            <section className="page-section">
+              <div className="page-title">
+                <div>
+                  <span className="eyebrow accent">TOOLS / ACTIONS</span>
+                  <h1>Araçlar</h1>
+                  <p>
+                    Ajanların kullanabileceği yetenekleri buradan yönet. Araç izinleri
+                    modelden bağımsız olarak Avenlyo tarafından uygulanır.
+                  </p>
+                </div>
+                <div className="tools-summary">
+                  <span>Katalog</span>
+                  <strong>{toolsCatalog.filter((tool) => tool.enabled).length} / {toolsCatalog.length}</strong>
+                </div>
+              </div>
+
+              <div className="tools-foundation-banner">
+                <div className="tools-foundation-icon"><Icon name="tools" /></div>
+                <div>
+                  <strong>Tools Foundation hazır · execution henüz chat'e bağlı değil</strong>
+                  <span>
+                    Bu sayfada katalog ve ajan izinlerini hazırlayabilirsin. Gerçek
+                    <code> lookup_order </code>
+                    çalıştırması bir sonraki aşamada bağlanacak.
+                  </span>
+                </div>
+                <span className={`tools-master-state ${toolFlags?.toolsEnabled ? "on" : "off"}`}>
+                  {toolFlags?.toolsEnabled ? "Master açık" : "Master kapalı"}
+                </span>
+              </div>
+
+              <div className="tools-safety-strip">
+                <span>
+                  <i className={toolFlags?.readsEnabled ? "status-dot" : "status-dot muted"} />
+                  Okuma {toolFlags?.readsEnabled ? "açık" : "kapalı"}
+                </span>
+                <span>
+                  <i className={toolFlags?.writesEnabled ? "status-dot" : "status-dot muted"} />
+                  Yazma {toolFlags?.writesEnabled ? "açık" : "kapalı"}
+                </span>
+                <span>
+                  <i className={toolFlags?.destructiveEnabled ? "status-dot" : "status-dot muted"} />
+                  Yıkıcı işlemler {toolFlags?.destructiveEnabled ? "açık" : "kapalı"}
+                </span>
+                <span>
+                  <i className={toolFlags?.dryRun ? "status-dot warning" : "status-dot muted"} />
+                  Dry-run {toolFlags?.dryRun ? "açık" : "kapalı"}
+                </span>
+              </div>
+
+              {toolsCatalog.length === 0 ? (
+                <div className="knowledge-empty">
+                  <div className="empty-spark"><Icon name="tools" /></div>
+                  <h3>Henüz araç yok</h3>
+                  <p>Built-in araçlar registry'ye eklendiğinde burada görünecek.</p>
+                </div>
+              ) : (
+                <div className="tools-grid">
+                  {toolsCatalog.map((tool) => {
+                    const writeLike =
+                      tool.riskLevel === "write" ||
+                      tool.riskLevel === "destructive" ||
+                      tool.riskLevel === "external_share";
+
+                    return (
+                      <article className={`tool-card ${tool.enabled ? "" : "disabled"}`} key={tool.id}>
+                        <div className="tool-card-top">
+                          <div className="tool-card-icon"><Icon name="tools" /></div>
+                          <div className="tool-card-heading">
+                            <strong>{tool.displayName}</strong>
+                            <code>{tool.name}</code>
+                          </div>
+                          <button
+                            className={`tool-toggle ${tool.enabled ? "active" : ""}`}
+                            onClick={() => void toggleToolEnabled(tool)}
+                            disabled={toolSavingId === tool.id}
+                            aria-pressed={tool.enabled}
+                          >
+                            <span />
+                            {toolSavingId === tool.id
+                              ? "Kaydediliyor"
+                              : tool.enabled
+                                ? "Katalog aktif"
+                                : "Kapalı"}
+                          </button>
+                        </div>
+
+                        <p>{tool.description}</p>
+
+                        <div className="tool-card-meta">
+                          <span className={`tool-risk risk-${tool.riskLevel}`}>
+                            {toolRiskLabel(tool.riskLevel)}
+                          </span>
+                          <span className="tool-approval">
+                            {toolApprovalLabel(tool.approvalPolicy)}
+                          </span>
+                        </div>
+
+                        <div className="tool-card-foot">
+                          <span>
+                            {writeLike && !toolFlags?.writesEnabled
+                              ? "Global yazma anahtarı kapalı"
+                              : !toolFlags?.toolsEnabled
+                                ? "Master tool anahtarı kapalı"
+                                : "Policy katmanı hazır"}
+                          </span>
+                          <span>Built-in</span>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="tools-note">
+                <Icon name="check" size={18} />
+                <div>
+                  <strong>Yetki prompt'tan gelmez</strong>
+                  <span>
+                    Bir araç yalnız katalogda aktifse ve ayrıca ajana atanmışsa
+                    kullanılabilir. Model, PDF veya kullanıcı mesajı bu izni genişletemez.
+                  </span>
+                </div>
+              </div>
+            </section>
+          )}
+
           {view === "agents" && (
             <section className="page-section">
               <div className="page-title">
@@ -1163,6 +1363,77 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                     Hazır belge yok. Önce Bilgi Tabanı sayfasından bir dosya yükle.
                   </div>
                 )}
+              </div>
+
+              <div className="knowledge-picker tool-picker">
+                <div className="knowledge-picker-head">
+                  <div>
+                    <strong>Araç izinleri</strong>
+                    <span>Bu ajanın hangi araçları kullanabileceğini belirle.</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() =>
+                      setAgentToolIds(
+                        toolsCatalog
+                          .filter((tool) => tool.enabled && tool.riskLevel === "read")
+                          .map((tool) => tool.id),
+                      )
+                    }
+                  >
+                    Okuma araçlarını seç
+                  </button>
+                </div>
+
+                {toolsCatalog.length ? (
+                  <div className="tool-permission-options">
+                    {toolsCatalog.map((tool) => {
+                      const checked = agentToolIds.includes(tool.id);
+                      const unavailable = !tool.enabled;
+
+                      return (
+                        <label
+                          className={`tool-permission-option ${unavailable ? "disabled" : ""}`}
+                          key={tool.id}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={unavailable}
+                            onChange={() =>
+                              setAgentToolIds((current) =>
+                                checked
+                                  ? current.filter((id) => id !== tool.id)
+                                  : [...current, tool.id],
+                              )
+                            }
+                          />
+                          <span className="knowledge-option-check">
+                            {checked && <Icon name="check" size={14} />}
+                          </span>
+                          <span className="tool-permission-copy">
+                            <strong>{tool.displayName}</strong>
+                            <small>
+                              {toolRiskLabel(tool.riskLevel)} · {toolApprovalLabel(tool.approvalPolicy)}
+                            </small>
+                          </span>
+                          <span className={`tool-permission-state ${tool.enabled ? "active" : ""}`}>
+                            {tool.enabled ? "Katalog aktif" : "Araç kapalı"}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="knowledge-picker-empty">
+                    Araç kataloğu boş. Önce Araçlar sayfasını kontrol et.
+                  </div>
+                )}
+
+                <div className="tool-picker-note">
+                  Bu seçim yalnız izinleri kaydeder. Tool execution henüz chat'e bağlanmadı.
+                </div>
               </div>
 
               <div className="context-note">
