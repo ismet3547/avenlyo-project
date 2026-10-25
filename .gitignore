@@ -6,5 +6,8 @@ out
 .env.*.local
 data/avenlyo.json
 data/*.tmp
+data/knowledge.db
+data/knowledge.db-*
+data/uploads/
 *.log
 .DS_Store
