@@ -5,6 +5,15 @@ import {
   retrieveKnowledgeForAgent,
   sourcesFromRetrieved,
 } from "@/lib/rag/retrieve";
+import {
+  createConversation,
+  deleteLastAssistantMessage,
+  getConversation,
+  insertConversationMessage,
+  latestUserMessage,
+  listConversationMessages,
+  touchConversationTitle,
+} from "@/lib/chat/store";
 import type { ChatMessage } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -25,39 +34,56 @@ function businessContext(business: Awaited<ReturnType<typeof readData>>["busines
     .join("\n");
 }
 
-function extractText(payload: Record<string, unknown>) {
-  if (typeof payload.output_text === "string") return payload.output_text;
-
-  const output = Array.isArray(payload.output) ? payload.output : [];
-  const chunks: string[] = [];
-
-  for (const item of output) {
-    if (!item || typeof item !== "object") continue;
-    const content = Array.isArray((item as { content?: unknown }).content)
-      ? ((item as { content: unknown[] }).content)
-      : [];
-
-    for (const part of content) {
-      if (!part || typeof part !== "object") continue;
-      const maybeText = (part as { text?: unknown }).text;
-      if (typeof maybeText === "string") chunks.push(maybeText);
-    }
+function retrievalGuidance(
+  confidence: "high" | "medium" | "low" | "none",
+  hasKnowledge: boolean,
+) {
+  if (!hasKnowledge || confidence === "none") {
+    return [
+      "Bu sorgu için yüklenen belgelerde yeterince ilgili bir kaynak bulunamadı.",
+      "İşletme bağlamında açıkça bulunmayan işletmeye özel fiyat, politika, süre veya koşulları tahmin etme.",
+      "Gerekirse bilginin mevcut kaynaklarda bulunmadığını açıkça söyle.",
+    ].join(" ");
   }
 
-  return chunks.join("\n").trim();
+  if (confidence === "low") {
+    return [
+      "Getirilen bilgi tabanı bağlamının güven seviyesi düşük.",
+      "Kaynak açıkça desteklemiyorsa kesin işletme bilgisi verme ve tahmin etme.",
+    ].join(" ");
+  }
+
+  return "Getirilen bilgi tabanı parçalarını yalnızca destekledikleri iddialar için kullan.";
+}
+
+function eventData(block: string) {
+  return block
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+}
+
+function streamLine(value: unknown) {
+  return `${JSON.stringify(value)}\n`;
 }
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
     agentId?: unknown;
     message?: unknown;
-    history?: unknown;
+    conversationId?: unknown;
+    regenerate?: unknown;
   };
 
   const agentId = typeof body.agentId === "string" ? body.agentId : "";
-  const message = typeof body.message === "string" ? body.message.trim() : "";
+  const requestedMessage =
+    typeof body.message === "string" ? body.message.trim() : "";
+  const requestedConversationId =
+    typeof body.conversationId === "string" ? body.conversationId : "";
+  const regenerate = body.regenerate === true;
 
-  if (!agentId || !message) {
+  if (!agentId || (!requestedMessage && !regenerate)) {
     return NextResponse.json(
       { error: "Ajan ve mesaj gerekli." },
       { status: 400 },
@@ -82,21 +108,67 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ajan bulunamadı." }, { status: 404 });
   }
 
-  const history = Array.isArray(body.history)
-    ? (body.history as ChatMessage[])
-        .filter(
-          (item) =>
-            item &&
-            (item.role === "user" || item.role === "assistant") &&
-            typeof item.content === "string",
-        )
-        .slice(-8)
-    : [];
+  let conversation = requestedConversationId
+    ? getConversation(requestedConversationId)
+    : null;
+
+  if (conversation && conversation.agentId !== agent.id) {
+    return NextResponse.json(
+      { error: "Bu sohbet seçilen ajana ait değil." },
+      { status: 403 },
+    );
+  }
+
+  if (requestedConversationId && !conversation) {
+    return NextResponse.json({ error: "Sohbet bulunamadı." }, { status: 404 });
+  }
+
+  let message = requestedMessage;
+  let history: ChatMessage[] = [];
+  let userMessage: ChatMessage | null = null;
+
+  if (regenerate) {
+    if (!conversation) {
+      return NextResponse.json(
+        { error: "Yeniden oluşturmak için bir sohbet gerekli." },
+        { status: 400 },
+      );
+    }
+
+    deleteLastAssistantMessage(conversation.id);
+    userMessage = latestUserMessage(conversation.id);
+
+    if (!userMessage) {
+      return NextResponse.json(
+        { error: "Yeniden oluşturulacak kullanıcı mesajı bulunamadı." },
+        { status: 400 },
+      );
+    }
+
+    message = userMessage.content;
+    const existing = listConversationMessages(conversation.id);
+    history = existing.slice(0, -1).slice(-12);
+  } else {
+    if (!conversation) {
+      conversation = createConversation(agent.id, message);
+    }
+
+    history = listConversationMessages(conversation.id).slice(-12);
+    userMessage = insertConversationMessage({
+      conversationId: conversation.id,
+      role: "user",
+      content: message,
+    });
+    touchConversationTitle(conversation.id, message);
+    conversation = getConversation(conversation.id) ?? conversation;
+  }
 
   const retrieval = await retrieveKnowledgeForAgent(agent.id, message);
   const retrieved = retrieval.items;
   const ragContext = contextFromRetrieved(retrieved);
+  const sources = sourcesFromRetrieved(retrieved);
   const business = businessContext(data.business);
+  const debugEnabled = process.env.AVENLYO_RAG_DEBUG === "true";
 
   const instructions = [
     `Sen "${agent.name}" adlı bir yapay zeka ajanısın.`,
@@ -104,13 +176,21 @@ export async function POST(request: Request) {
     agent.goal && `Ana hedefin: ${agent.goal}`,
     agent.instructions && `Özel talimatlar:\n${agent.instructions}`,
     "Yanıt dilini kullanıcının diline uyarla.",
-    "Sağlanan işletme bağlamını ve bilgi tabanı kaynaklarını temel al. Bu kaynaklarda bulunmayan özel işletme bilgilerini uydurma.",
-    "Bilgi tabanı parçaları arasında çelişki varsa bunu açıkça belirt. Yeterli bilgi yoksa eksik olduğunu dürüstçe söyle.",
+    "Yanıtı okunabilir Markdown ile yazabilirsin; gereksiz başlık ve süsleme kullanma.",
+    "Sağlanan işletme bağlamını ve bilgi tabanı kaynaklarını temel al. Kaynaklarda bulunmayan özel işletme bilgilerini uydurma.",
+    "Bilgi tabanı parçaları arasında çelişki varsa bunu açıkça belirt.",
+    retrievalGuidance(retrieval.confidence, retrieved.length > 0),
     business && `\nİŞLETME BAĞLAMI\n${business}`,
     ragContext && `\nBİLGİ TABANI BAĞLAMI\n${ragContext}`,
   ]
     .filter(Boolean)
     .join("\n\n");
+
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 90_000);
+  request.signal.addEventListener("abort", () => abortController.abort(), {
+    once: true,
+  });
 
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -128,38 +208,136 @@ export async function POST(request: Request) {
         })),
         { role: "user", content: message },
       ],
+      stream: true,
+      store: false,
     }),
-    signal: AbortSignal.timeout(90_000),
+    signal: abortController.signal,
   });
 
-  const payload = (await response.json()) as Record<string, unknown>;
+  if (!response.ok || !response.body) {
+    clearTimeout(timeout);
+    let apiMessage = "OpenAI isteği başarısız oldu.";
 
-  if (!response.ok) {
-    const errorObject =
-      payload.error && typeof payload.error === "object"
-        ? (payload.error as { message?: unknown })
-        : null;
-    const apiMessage =
-      errorObject && typeof errorObject.message === "string"
-        ? errorObject.message
-        : "OpenAI isteği başarısız oldu.";
+    try {
+      const payload = (await response.json()) as {
+        error?: { message?: string };
+      };
+      apiMessage = payload.error?.message || apiMessage;
+    } catch {
+      // Keep the generic message.
+    }
 
-    return NextResponse.json({ error: apiMessage }, { status: response.status });
-  }
-
-  const reply = extractText(payload);
-  if (!reply) {
     return NextResponse.json(
-      { error: "Model boş bir yanıt döndürdü." },
-      { status: 502 },
+      { error: apiMessage },
+      { status: response.status || 502 },
     );
   }
 
-  const debugEnabled = process.env.AVENLYO_RAG_DEBUG === "true";
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
 
-  return NextResponse.json({
-    reply,
-    sources: sourcesFromRetrieved(retrieved),
-    ...(debugEnabled && { debug: retrieval.debug }),
+  const output = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      let assistantText = "";
+      let buffer = "";
+
+      const push = (value: unknown) => {
+        controller.enqueue(encoder.encode(streamLine(value)));
+      };
+
+      push({
+        type: "meta",
+        conversation,
+        userMessage,
+        sources,
+        debug: debugEnabled ? retrieval.debug : undefined,
+        confidence: retrieval.confidence,
+      });
+
+      try {
+        const reader = response.body!.getReader();
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary !== -1) {
+            const block = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            boundary = buffer.indexOf("\n\n");
+
+            const raw = eventData(block);
+            if (!raw || raw === "[DONE]") continue;
+
+            let event: {
+              type?: string;
+              delta?: string;
+              error?: { message?: string };
+            };
+
+            try {
+              event = JSON.parse(raw);
+            } catch {
+              continue;
+            }
+
+            if (
+              event.type === "response.output_text.delta" &&
+              typeof event.delta === "string"
+            ) {
+              assistantText += event.delta;
+              push({ type: "delta", delta: event.delta });
+            } else if (event.type === "error") {
+              throw new Error(
+                event.error?.message || "Model yanıtı sırasında hata oluştu.",
+              );
+            }
+          }
+        }
+
+        if (!assistantText.trim()) {
+          throw new Error("Model boş bir yanıt döndürdü.");
+        }
+
+        const assistantMessage = insertConversationMessage({
+          conversationId: conversation!.id,
+          role: "assistant",
+          content: assistantText,
+          sources,
+          debug: debugEnabled ? retrieval.debug : undefined,
+        });
+
+        push({
+          type: "done",
+          message: assistantMessage,
+          conversation: getConversation(conversation!.id) ?? conversation,
+          confidence: retrieval.confidence,
+        });
+      } catch (error) {
+        if (!request.signal.aborted) {
+          push({
+            type: "error",
+            error:
+              error instanceof Error
+                ? error.message
+                : "Yanıt sırasında bir hata oluştu.",
+          });
+        }
+      } finally {
+        clearTimeout(timeout);
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(output, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
   });
 }
