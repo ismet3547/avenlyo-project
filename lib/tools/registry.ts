@@ -97,5 +97,6 @@ export function toCatalogItem(
       : null,
     enabled: state.enabled ?? true,
     builtin: state.builtin ?? true,
+    executionReady: definition.config.executor !== "planned",
   };
 }
