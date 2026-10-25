@@ -141,13 +141,6 @@ export async function POST(request: Request) {
     );
   }
 
-  if (
-    (approval.decision === "approved" && run.status === "success") ||
-    approval.decision === "rejected"
-  ) {
-    return doneResponse(pendingMessage, conversation);
-  }
-
   let args: unknown;
   try {
     args = JSON.parse(run.argumentsJson);
@@ -184,6 +177,63 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Araç bulunamadı." }, { status: 404 });
   }
 
+  if (approval.decision === "approved" && run.status === "success") {
+    let result: Record<string, unknown> | undefined;
+    try {
+      result = run.resultJson
+        ? (JSON.parse(run.resultJson) as Record<string, unknown>)
+        : undefined;
+    } catch {
+      result = undefined;
+    }
+
+    const recoveredActivity: ToolActivity = {
+      id: toolRunId,
+      toolRunId,
+      toolName: definition.name,
+      displayName: definition.displayName,
+      status: "success",
+      summary: "İşlem daha önce tamamlandı; mevcut sonuç kullanıldı.",
+      arguments: args as Record<string, unknown>,
+      result,
+    };
+    const recoveredMessage = updateConversationMessage({
+      id: run.messageId,
+      content:
+        pendingMessage.content ||
+        "Onaylanan CRM işlemi daha önce tamamlandı.",
+      toolActivities: upsertActivity(
+        pendingMessage.toolActivities || [],
+        recoveredActivity,
+      ),
+    });
+
+    return doneResponse(recoveredMessage ?? pendingMessage, conversation);
+  }
+
+  if (approval.decision === "rejected") {
+    const rejectedActivity: ToolActivity = {
+      id: toolRunId,
+      toolRunId,
+      toolName: definition.name,
+      displayName: definition.displayName,
+      status: "rejected",
+      summary: "İşlem kullanıcı tarafından reddedildi.",
+      arguments: args as Record<string, unknown>,
+    };
+    const rejectedMessage = updateConversationMessage({
+      id: run.messageId,
+      content:
+        pendingMessage.content ||
+        "İşlem reddedildi; herhangi bir CRM kaydı oluşturulmadı.",
+      toolActivities: upsertActivity(
+        pendingMessage.toolActivities || [],
+        rejectedActivity,
+      ),
+    });
+    return doneResponse(rejectedMessage ?? pendingMessage, conversation);
+  }
+
   const flags = getToolFeatureFlags();
 
   if (decision === "approved") {
@@ -216,24 +266,18 @@ export async function POST(request: Request) {
     }
   }
 
-  const decided = decideToolApproval(toolRunId, decision);
-  if (!decided) {
-    return NextResponse.json({ error: "Onay kaydı bulunamadı." }, { status: 404 });
+  let resumeItems: unknown[] = [];
+  try {
+    const parsed = JSON.parse(approval.resumeItemsJson || "[]") as unknown;
+    resumeItems = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    resumeItems = [];
   }
 
-  if (decided.decision === "expired") {
+  if (!resumeItems.length) {
     return NextResponse.json(
-      { error: "Onay süresi doldu. İşlemi yeniden istemeniz gerekiyor." },
-      { status: 410 },
-    );
-  }
-
-  const latestRun = getToolRun(toolRunId)!;
-
-  if (decision === "approved" && latestRun.status === "success") {
-    return doneResponse(
-      getConversationMessage(run.messageId) ?? pendingMessage,
-      conversation,
+      { error: "Model continuation verisi bulunamadı." },
+      { status: 409 },
     );
   }
 
@@ -251,19 +295,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Ajan bulunamadı." }, { status: 404 });
   }
 
-  let resumeItems: unknown[] = [];
-  try {
-    const parsed = JSON.parse(decided.resumeItemsJson || "[]") as unknown;
-    resumeItems = Array.isArray(parsed) ? parsed : [];
-  } catch {
-    resumeItems = [];
+  const decided = decideToolApproval(toolRunId, decision);
+  if (!decided) {
+    return NextResponse.json({ error: "Onay kaydı bulunamadı." }, { status: 404 });
   }
 
-  if (!resumeItems.length) {
-    return NextResponse.json(
-      { error: "Model continuation verisi bulunamadı." },
-      { status: 409 },
-    );
+  if (decided.decision === "expired") {
+    const expiredActivity: ToolActivity = {
+      id: toolRunId,
+      toolRunId,
+      toolName: definition.name,
+      displayName: definition.displayName,
+      status: "rejected",
+      summary: "Onay süresi doldu; işlem çalıştırılmadı.",
+      arguments: args as Record<string, unknown>,
+      error: "APPROVAL_EXPIRED",
+    };
+    const expiredMessage = updateConversationMessage({
+      id: run.messageId,
+      content: "Onay süresi doldu. İşlemi yeniden istemeniz gerekiyor.",
+      toolActivities: upsertActivity(
+        pendingMessage.toolActivities || [],
+        expiredActivity,
+      ),
+    });
+    return doneResponse(expiredMessage ?? pendingMessage, conversation);
   }
 
   const encoder = new TextEncoder();
