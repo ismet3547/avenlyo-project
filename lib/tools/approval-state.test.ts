@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { getKnowledgeDb } from "@/lib/rag/db";
+import { getKnowledgeDb } from "../rag/db";
 import { hashToolArguments } from "./arguments";
 import {
   claimApprovedToolRun,
