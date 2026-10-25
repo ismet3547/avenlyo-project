@@ -7,7 +7,10 @@ Avenlyo, işletme bilgisini ve yerel dokümanlarını tek yerde tutup bu bağlam
 - İşletme profili: marka, sektör, hedef kitle, ton, ürün/hizmet, SSS ve özel bilgiler
 - Ajan oluşturma, düzenleme ve silme
 - Her ajana özel rol, amaç, talimat ve model seçimi
-- OpenAI Responses API ile ajan playground
+- OpenAI Responses API ile gerçek zamanlı streaming ajan playground
+- Güvenli Markdown/GFM cevap render'ı
+- Yanıtı durdurma, kopyalama ve yeniden oluşturma
+- Ajan bazlı yerel sohbet geçmişi
 - Ayrı `/bilgi-tabani` sayfası
 - PDF, DOCX, TXT ve Markdown dosya yükleme
 - Yerel SQLite bilgi tabanı ve FTS5 keyword arama
@@ -37,6 +40,7 @@ OPENAI_MODEL=gpt-6-luna
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 AVENLYO_RAG_DEBUG=false
 AVENLYO_OCR_LANGS=tur,eng
+AVENLYO_RAG_SEMANTIC_MIN=0.22
 ```
 
 Ardından:
@@ -68,7 +72,15 @@ Geliştirme sırasında retrieval davranışını görmek için:
 AVENLYO_RAG_DEBUG=true
 ```
 
-ayarlayın. Bir chat cevabından sonra Playground başlığında **RAG Debug** düğmesi görünür. Panel semantic adayları, keyword sonuçlarını, final hybrid seçimi, seçilen token miktarını ve retrieval sürelerini gösterir.
+ayarlayın. Bir chat cevabından sonra Playground başlığında **RAG Debug** düğmesi görünür. Panel semantic adayları, keyword sonuçlarını, final hybrid seçimi, confidence seviyesini, relevance threshold'u, elenen duplicate/alakasız adayları, kısa chunk önizlemelerini, seçilen token miktarını ve retrieval sürelerini gösterir.
+
+Semantic retrieval için varsayılan minimum eşik:
+
+```env
+AVENLYO_RAG_SEMANTIC_MIN=0.22
+```
+
+olarak ayarlanır. Keyword eşleşmesi olmayan ve bu eşikten düşük semantic skora sahip chunk'lar modele gönderilmez. Aynı sayfadan tekrar eden veya çok benzer chunk'lar ayrıca elenir.
 
 ### OCR
 
@@ -94,19 +106,24 @@ altında tutulur. RAG metadata, chunk, embedding ve ajan-belge ilişkileri:
 data/knowledge.db
 ```
 
-SQLite veritabanında saklanır.
+SQLite veritabanında saklanır. Ajan bazlı sohbetler ve mesaj geçmişi de aynı yerel `knowledge.db` içinde `conversations` ve `chat_messages` tablolarında tutulur.
 
 OpenAI'ye yalnızca:
 - indeksleme sırasında embedding üretilecek metin parçaları,
-- chat sırasında retrieval ile seçilen ilgili metin parçaları
+- chat sırasında retrieval ile seçilen ilgili metin parçaları,
+- kontrollü context için son konuşma mesajları
 
 gönderilir.
+
+Chat tarafında her istekte tüm geçmiş yerine son 12 mesaj kullanılır. Responses API çağrıları `store: false` ile yapılır; sohbet geçmişinin ürün içi kalıcı kopyası yalnızca yerel SQLite veritabanında tutulur.
 
 ## Mimari
 
 - **Next.js App Router + TypeScript**
 - **Server Route Handlers**: business, agents, knowledge ve chat API'leri
-- **OpenAI Responses API**: cevap üretimi
+- **OpenAI Responses API**: SSE tabanlı streaming cevap üretimi (`response.output_text.delta`)
+- **React Markdown + GFM**: güvenli Markdown, tablo, liste ve kod render'ı
+- **SQLite chat store**: ajan bazlı konuşma ve mesaj geçmişi
 - **OpenAI Embeddings API**: doküman ve sorgu embedding'leri
 - **SQLite + FTS5**: yerel metadata, chunk ve keyword retrieval
 - **Node cosine similarity**: semantic retrieval
