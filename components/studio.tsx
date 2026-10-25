@@ -1225,11 +1225,15 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
               <div className="tools-foundation-banner">
                 <div className="tools-foundation-icon"><Icon name="tools" /></div>
                 <div>
-                  <strong>Tools Foundation hazır · execution henüz chat'e bağlı değil</strong>
+                  <strong>
+                    {toolFlags?.toolsEnabled
+                      ? "Read-only tool execution hazır"
+                      : "Tools hazır · master anahtarı kapalı"}
+                  </strong>
                   <span>
-                    Bu sayfada katalog ve ajan izinlerini hazırlayabilirsin. Gerçek
-                    <code> lookup_order </code>
-                    çalıştırması bir sonraki aşamada bağlanacak.
+                    <code>lookup_order</code> artık Playground içinde çalışabilir.
+                    Kullanmak için aracı ajana ata ve Tools master anahtarını etkinleştir.
+                    Write araçları bu aşamada hâlâ çalıştırılmaz.
                   </span>
                 </div>
                 <span className={`tools-master-state ${toolFlags?.toolsEnabled ? "on" : "off"}`}>
@@ -1312,7 +1316,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                                 ? "Master tool anahtarı kapalı"
                                 : "Policy katmanı hazır"}
                           </span>
-                          <span>Built-in</span>
+                          <span>{tool.executionReady ? "Execution hazır" : "Yakında"}</span>
                         </div>
                       </article>
                     );
@@ -1479,7 +1483,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   <div className="tool-permission-options">
                     {toolsCatalog.map((tool) => {
                       const checked = agentToolIds.includes(tool.id);
-                      const unavailable = !tool.enabled;
+                      const unavailable = !tool.enabled || !tool.executionReady;
 
                       return (
                         <button
@@ -1508,7 +1512,11 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                             </small>
                           </span>
                           <span className={`tool-permission-state ${tool.enabled ? "active" : ""}`}>
-                            {tool.enabled ? "Katalog aktif" : "Araç kapalı"}
+                            {!tool.executionReady
+                              ? "Yakında"
+                              : tool.enabled
+                                ? "Execution hazır"
+                                : "Araç kapalı"}
                           </span>
                         </button>
                       );
