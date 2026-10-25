@@ -902,7 +902,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 
 .playground.playground-v2 {
-  width: min(1120px, 100%);
+  width: min(1180px, 100%);
   height: min(790px, calc(100vh - 56px));
 }
 .playground-workspace {
