@@ -2,8 +2,16 @@
 
 import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PdfSourceViewer } from "@/components/pdf-source-viewer";
+import dynamic from "next/dynamic";
 import type { Agent, BusinessProfile, ChatMessage, KnowledgeDocument } from "@/lib/types";
+
+const PdfSourceViewer = dynamic(
+  () =>
+    import("@/components/pdf-source-viewer").then(
+      (module) => module.PdfSourceViewer,
+    ),
+  { ssr: false },
+);
 
 type View = "overview" | "business" | "knowledge" | "agents";
 
