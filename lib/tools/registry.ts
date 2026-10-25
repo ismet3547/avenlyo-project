@@ -46,7 +46,7 @@ const definitions: ToolDefinition[] = [
     inputSchema: lookupOrderInput,
     outputSchema: lookupOrderOutput,
     config: {
-      executor: "planned",
+      executor: "local",
       resultAllowlist: ["order_id", "status", "tracking_status"],
     },
   },
