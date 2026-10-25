@@ -1232,8 +1232,8 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   </strong>
                   <span>
                     <code>lookup_order</code> artık Playground içinde çalışabilir.
-                    Kullanmak için aracı ajana ata ve Tools master anahtarını etkinleştir.
-                    Write araçları bu aşamada hâlâ çalıştırılmaz.
+                    Aracı ajana ata. Master kapalıysa <code>AVENLYO_TOOLS_ENABLED=true</code>
+                    yapıp sunucuyu yeniden başlat. Write araçları bu aşamada hâlâ çalıştırılmaz.
                   </span>
                 </div>
                 <span className={`tools-master-state ${toolFlags?.toolsEnabled ? "on" : "off"}`}>
