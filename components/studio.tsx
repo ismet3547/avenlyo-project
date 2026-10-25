@@ -1,10 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, DragEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Agent, BusinessProfile, ChatMessage } from "@/lib/types";
+import type { Agent, BusinessProfile, ChatMessage, KnowledgeDocument } from "@/lib/types";
 
-type View = "overview" | "business" | "agents";
+type View = "overview" | "business" | "knowledge" | "agents";
 
 const emptyBusiness: BusinessProfile = {
   name: "",
@@ -37,13 +37,13 @@ function Icon({
   name,
   size = 18,
 }: {
-  name: "home" | "business" | "agents" | "plus" | "arrow" | "spark" | "check" | "trash" | "edit" | "send" | "menu";
+  name: "home" | "business" | "knowledge" | "agents" | "plus" | "arrow" | "spark" | "check" | "trash" | "edit" | "send" | "menu" | "upload" | "refresh";
   size?: number;
 }) {
   const paths: Record<string, React.ReactNode> = {
     home: <><path d="M3 10.8 12 3l9 7.8" /><path d="M5 9.5V21h14V9.5" /><path d="M9 21v-7h6v7" /></>,
     business: <><path d="M4 21V7l8-4 8 4v14" /><path d="M8 21v-5h8v5" /><path d="M8 10h.01M12 10h.01M16 10h.01" /></>,
-    agents: <><rect x="5" y="7" width="14" height="12" rx="3" /><path d="M9 12h.01M15 12h.01M9 16h6M12 7V4M9 4h6" /></>,
+    knowledge: <><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5v-16Z" /><path d="M4 18.5A2.5 2.5 0 0 1 6.5 16H20" /></>,\n    agents: <><rect x="5" y="7" width="14" height="12" rx="3" /><path d="M9 12h.01M15 12h.01M9 16h6M12 7V4M9 4h6" /></>,
     plus: <><path d="M12 5v14M5 12h14" /></>,
     arrow: <path d="m9 18 6-6-6-6" />,
     spark: <path d="m12 3 1.35 4.12L17.5 8.5l-4.15 1.38L12 14l-1.35-4.12L6.5 8.5l4.15-1.38L12 3ZM19 15l.75 2.25L22 18l-2.25.75L19 21l-.75-2.25L16 18l2.25-.75L19 15Z" />,
@@ -51,7 +51,7 @@ function Icon({
     trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 14h8l1-14" /></>,
     edit: <><path d="M4 20h4l11-11-4-4L4 16v4Z" /><path d="m13.5 6.5 4 4" /></>,
     send: <><path d="m22 2-7 20-4-9-9-4 20-7Z" /><path d="M22 2 11 13" /></>,
-    menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,
+    menu: <><path d="M4 7h16M4 12h16M4 17h16" /></>,\n    upload: <><path d="M12 16V4M7 9l5-5 5 5" /><path d="M5 20h14" /></>,\n    refresh: <><path d="M20 11a8 8 0 1 0 1.2 4.2" /><path d="M20 4v7h-7" /></>,
   };
 
   return (
@@ -75,7 +75,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const router = useRouter();
   const view = initialView;
   const [business, setBusiness] = useState<BusinessProfile>(emptyBusiness);
-  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);\n  const [documents, setDocuments] = useState<KnowledgeDocument[]>([]);\n  const [uploading, setUploading] = useState(false);\n  const [dragActive, setDragActive] = useState(false);\n  const [agentKnowledgeIds, setAgentKnowledgeIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [businessSaving, setBusinessSaving] = useState(false);
   const [notice, setNotice] = useState("");
@@ -92,10 +92,12 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     Promise.all([
       fetch("/api/business").then((response) => response.json()),
       fetch("/api/agents").then((response) => response.json()),
+      fetch("/api/knowledge").then((response) => response.json()),
     ])
-      .then(([businessData, agentData]) => {
+      .then(([businessData, agentData, knowledgeData]) => {
         setBusiness(businessData);
         setAgents(agentData);
+        setDocuments(Array.isArray(knowledgeData) ? knowledgeData : []);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -125,6 +127,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     const routes: Record<View, string> = {
       overview: "/",
       business: "/bilgiler",
+      knowledge: "/bilgi-tabani",
       agents: "/ajanlar",
     };
     setMobileNav(false);
@@ -151,13 +154,117 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     }
   }
 
+  async function refreshDocuments() {
+    const response = await fetch("/api/knowledge");
+    const data = await response.json();
+    if (response.ok && Array.isArray(data)) setDocuments(data);
+  }
+
+  async function uploadDocuments(files: FileList | File[]) {
+    const queue = Array.from(files);
+    if (!queue.length || uploading) return;
+
+    setUploading(true);
+    let uploaded = 0;
+
+    try {
+      for (const file of queue) {
+        const form = new FormData();
+        form.append("file", file);
+
+        const response = await fetch("/api/knowledge/upload", {
+          method: "POST",
+          body: form,
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          flash(data.error || `${file.name} yüklenemedi.`);
+          continue;
+        }
+
+        uploaded += 1;
+      }
+
+      await refreshDocuments();
+      if (uploaded) {
+        flash(
+          uploaded === 1
+            ? "Belge indekslendi ve bilgi tabanına eklendi."
+            : `${uploaded} belge indekslendi ve bilgi tabanına eklendi.`,
+        );
+      }
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Dosya yüklenemedi.");
+      await refreshDocuments();
+    } finally {
+      setUploading(false);
+      setDragActive(false);
+    }
+  }
+
+  function handleKnowledgeInput(event: ChangeEvent<HTMLInputElement>) {
+    if (event.target.files) void uploadDocuments(event.target.files);
+    event.target.value = "";
+  }
+
+  function handleKnowledgeDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDragActive(false);
+    if (event.dataTransfer.files.length) {
+      void uploadDocuments(event.dataTransfer.files);
+    }
+  }
+
+  async function removeKnowledgeDocument(document: KnowledgeDocument) {
+    if (!window.confirm(`"${document.originalName}" belgesini silmek istediğinizden emin misiniz?`)) return;
+
+    const response = await fetch(
+      `/api/knowledge/${encodeURIComponent(document.id)}`,
+      { method: "DELETE" },
+    );
+
+    if (!response.ok) {
+      const data = await response.json();
+      flash(data.error || "Belge silinemedi.");
+      return;
+    }
+
+    setDocuments((current) => current.filter((item) => item.id !== document.id));
+    setAgentKnowledgeIds((current) => current.filter((id) => id !== document.id));
+    flash("Belge bilgi tabanından silindi.");
+  }
+
+  async function reindexKnowledgeDocument(document: KnowledgeDocument) {
+    setDocuments((current) =>
+      current.map((item) =>
+        item.id === document.id ? { ...item, status: "processing", error: null } : item,
+      ),
+    );
+
+    const response = await fetch(
+      `/api/knowledge/${encodeURIComponent(document.id)}/reindex`,
+      { method: "POST" },
+    );
+    const data = await response.json();
+    await refreshDocuments();
+
+    if (!response.ok) {
+      flash(data.error || "Belge yeniden indekslenemedi.");
+      return;
+    }
+
+    flash("Belge yeniden indekslendi.");
+  }
+
   function openNewAgent() {
     setEditingId(null);
     setAgentForm(blankAgent);
+    setAgentKnowledgeIds([]);
     setEditorOpen(true);
   }
 
-  function openEditAgent(agent: Agent) {
+  async function openEditAgent(agent: Agent) {
     setEditingId(agent.id);
     setAgentForm({
       name: agent.name,
@@ -167,7 +274,20 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       instructions: agent.instructions,
       model: agent.model,
     });
+    setAgentKnowledgeIds([]);
     setEditorOpen(true);
+
+    try {
+      const response = await fetch(
+        `/api/agents/${encodeURIComponent(agent.id)}/knowledge`,
+      );
+      const data = await response.json();
+      if (response.ok && Array.isArray(data.documentIds)) {
+        setAgentKnowledgeIds(data.documentIds);
+      }
+    } catch {
+      setAgentKnowledgeIds([]);
+    }
   }
 
   async function saveAgent(event: FormEvent) {
@@ -189,7 +309,22 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
         ? current.map((agent) => (agent.id === editingId ? data : agent))
         : [data, ...current],
     );
+
+    const knowledgeResponse = await fetch(
+      `/api/agents/${encodeURIComponent(data.id)}/knowledge`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentIds: agentKnowledgeIds }),
+      },
+    );
+
     setEditorOpen(false);
+    if (!knowledgeResponse.ok) {
+      flash("Ajan kaydedildi ancak bilgi kaynakları güncellenemedi.");
+      return;
+    }
+
     flash(editingId ? "Ajan güncellendi." : "Yeni ajan oluşturuldu.");
   }
 
@@ -234,7 +369,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Yanıt alınamadı.");
-      setChat((current) => [...current, { role: "assistant", content: data.reply }]);
+      setChat((current) => [...current, { role: "assistant", content: data.reply, sources: Array.isArray(data.sources) ? data.sources : [] }]);
     } catch (error) {
       setChat((current) => [
         ...current,
@@ -248,9 +383,10 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     }
   }
 
-  const navItems: { id: View; label: string; icon: "home" | "business" | "agents" }[] = [
+  const navItems: { id: View; label: string; icon: "home" | "business" | "knowledge" | "agents" }[] = [
     { id: "overview", label: "Genel Bakış", icon: "home" },
     { id: "business", label: "İşletme Bilgileri", icon: "business" },
+    { id: "knowledge", label: "Bilgi Tabanı", icon: "knowledge" },
     { id: "agents", label: "Ajanlar", icon: "agents" },
   ];
 
@@ -455,6 +591,125 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
             </section>
           )}
 
+          {view === "knowledge" && (
+            <section className="page-section">
+              <div className="page-title">
+                <div>
+                  <span className="eyebrow accent">RAG KNOWLEDGE</span>
+                  <h1>Bilgi Tabanı</h1>
+                  <p>
+                    PDF ve dokümanlarını yerel olarak sakla. Ajanlar yalnızca
+                    kendilerine bağladığın hazır kaynaklardan ilgili parçaları getirir.
+                  </p>
+                </div>
+                <div className="knowledge-summary">
+                  <span>Hazır belge</span>
+                  <strong>{documents.filter((item) => item.status === "ready").length}</strong>
+                </div>
+              </div>
+
+              <div
+                className={`upload-zone ${dragActive ? "drag-active" : ""}`}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setDragActive(true);
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDragLeave={() => setDragActive(false)}
+                onDrop={handleKnowledgeDrop}
+              >
+                <div className="upload-zone-icon"><Icon name="upload" /></div>
+                <div>
+                  <h3>{uploading ? "Belgeler işleniyor..." : "Dosyalarını buraya bırak"}</h3>
+                  <p>PDF, DOCX, TXT veya MD · dosya başına en fazla 25 MB</p>
+                </div>
+                <input
+                  id="knowledge-upload"
+                  className="file-input"
+                  type="file"
+                  accept=".pdf,.docx,.txt,.md"
+                  multiple
+                  disabled={uploading}
+                  onChange={handleKnowledgeInput}
+                />
+                <label className="primary" htmlFor="knowledge-upload">
+                  <Icon name="plus" size={16} />
+                  {uploading ? "İndeksleniyor..." : "Dosya seç"}
+                </label>
+              </div>
+
+              <div className="knowledge-privacy">
+                <Icon name="check" size={18} />
+                <div>
+                  <strong>Local-first bilgi tabanı</strong>
+                  <span>
+                    Orijinal dosyalar bu cihazda kalır. OpenAI'ye yalnızca embedding için
+                    metin parçaları ve cevap sırasında getirilen ilgili parçalar gönderilir.
+                  </span>
+                </div>
+              </div>
+
+              <div className="knowledge-list-head">
+                <div>
+                  <span className="eyebrow">BELGELER</span>
+                  <h2>Kaynaklar</h2>
+                </div>
+                <span>{documents.length} belge</span>
+              </div>
+
+              {documents.length === 0 ? (
+                <div className="knowledge-empty">
+                  <div className="empty-spark"><Icon name="knowledge" /></div>
+                  <h3>Henüz belge yok</h3>
+                  <p>İlk PDF veya dokümanını yüklediğinde burada indeks durumunu göreceksin.</p>
+                </div>
+              ) : (
+                <div className="knowledge-list">
+                  {documents.map((document) => (
+                    <article className="knowledge-row" key={document.id}>
+                      <div className="document-icon">
+                        {document.extension.replace(".", "").toUpperCase()}
+                      </div>
+                      <div className="document-main">
+                        <div className="document-title-row">
+                          <strong>{document.originalName}</strong>
+                          <span className={`status-badge status-${document.status}`}>
+                            {knowledgeStatusLabel(document.status)}
+                          </span>
+                        </div>
+                        <div className="document-meta">
+                          <span>{formatBytes(document.size)}</span>
+                          {document.pageCount && <span>{document.pageCount} sayfa</span>}
+                          <span>{document.chunkCount} parça</span>
+                        </div>
+                        {document.error && <p className="document-error">{document.error}</p>}
+                      </div>
+                      <div className="document-actions">
+                        <button
+                          className="icon-button"
+                          onClick={() => void reindexKnowledgeDocument(document)}
+                          disabled={document.status === "processing"}
+                          aria-label="Yeniden indeksle"
+                          title="Yeniden indeksle"
+                        >
+                          <Icon name="refresh" size={16} />
+                        </button>
+                        <button
+                          className="icon-button danger"
+                          onClick={() => void removeKnowledgeDocument(document)}
+                          aria-label="Belgeyi sil"
+                          title="Belgeyi sil"
+                        >
+                          <Icon name="trash" size={16} />
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
           {view === "agents" && (
             <section className="page-section">
               <div className="page-title">
@@ -518,6 +773,64 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 </select>
               </label>
 
+              <div className="knowledge-picker">
+                <div className="knowledge-picker-head">
+                  <div>
+                    <strong>Bilgi kaynakları</strong>
+                    <span>Bu ajanın RAG aramasında kullanabileceği belgeleri seç.</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={() =>
+                      setAgentKnowledgeIds(
+                        documents
+                          .filter((document) => document.status === "ready")
+                          .map((document) => document.id),
+                      )
+                    }
+                  >
+                    Tümünü seç
+                  </button>
+                </div>
+
+                {documents.some((document) => document.status === "ready") ? (
+                  <div className="knowledge-options">
+                    {documents
+                      .filter((document) => document.status === "ready")
+                      .map((document) => {
+                        const checked = agentKnowledgeIds.includes(document.id);
+                        return (
+                          <label className="knowledge-option" key={document.id}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setAgentKnowledgeIds((current) =>
+                                  checked
+                                    ? current.filter((id) => id !== document.id)
+                                    : [...current, document.id],
+                                )
+                              }
+                            />
+                            <span className="knowledge-option-check">
+                              {checked && <Icon name="check" size={14} />}
+                            </span>
+                            <span>
+                              <strong>{document.originalName}</strong>
+                              <small>{document.chunkCount} parça</small>
+                            </span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                ) : (
+                  <div className="knowledge-picker-empty">
+                    Hazır belge yok. Önce Bilgi Tabanı sayfasından bir dosya yükle.
+                  </div>
+                )}
+              </div>
+
               <div className="context-note">
                 <Icon name="check" />
                 <div>
@@ -551,7 +864,7 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                 <div className="chat-empty">
                   <div className="empty-spark">✦</div>
                   <h3>Ajanı test et</h3>
-                  <p>Gerçek bir müşteri gibi mesaj gönder. Ajan işletme profilindeki bilgileri kullanarak yanıt verecek.</p>
+                  <p>Gerçek bir müşteri gibi mesaj gönder. Ajan işletme profili ve kendisine bağlanan bilgi kaynaklarından ilgili parçaları kullanacak.</p>
                   <div className="suggestions">
                     {["Bana işletmenizi kısaca anlat.", "Hangi hizmetleri sunuyorsunuz?", "Neden sizi tercih etmeliyim?"].map((text) => (
                       <button key={text} onClick={() => setMessage(text)}>{text}</button>
@@ -563,7 +876,22 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   {chat.map((item, index) => (
                     <div key={index} className={`message ${item.role}`}>
                       <span>{item.role === "assistant" ? playgroundAgent.emoji : "Siz"}</span>
-                      <p>{item.content}</p>
+                      <div className="message-content">
+                        <p>{item.content}</p>
+                        {item.role === "assistant" && item.sources && item.sources.length > 0 && (
+                          <div className="message-sources">
+                            <strong>Kaynaklar</strong>
+                            <div>
+                              {item.sources.map((source, sourceIndex) => (
+                                <span className="source-chip" key={`${source.documentId}-${source.pageStart}-${sourceIndex}`}>
+                                  {source.documentName}
+                                  {source.pageStart ? ` · s.${source.pageStart}` : ""}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                   {sending && <div className="message assistant"><span>{playgroundAgent.emoji}</span><p className="typing">Yanıt hazırlanıyor<span>...</span></p></div>}
@@ -645,4 +973,17 @@ function Field({
       )}
     </label>
   );
+}
+
+
+function knowledgeStatusLabel(status: KnowledgeDocument["status"]) {
+  if (status === "ready") return "Hazır";
+  if (status === "processing") return "İşleniyor";
+  return "Hata";
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
