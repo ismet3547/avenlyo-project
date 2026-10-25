@@ -5,6 +5,7 @@ import type {
   Conversation,
   KnowledgeSource,
   RagDebugTrace,
+  ToolActivity,
 } from "@/lib/types";
 
 type ConversationRow = {
@@ -22,6 +23,7 @@ type MessageRow = {
   content: string;
   sources_json: string | null;
   debug_json: string | null;
+  tool_activities_json: string | null;
   created_at: string;
 };
 
@@ -46,12 +48,19 @@ function db() {
       content TEXT NOT NULL,
       sources_json TEXT,
       debug_json TEXT,
+      tool_activities_json TEXT,
       created_at TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created
       ON chat_messages(conversation_id, created_at ASC);
   `);
+
+  const messageColumns = database.pragma("table_info(chat_messages)") as Array<{ name: string }>;
+  if (!messageColumns.some((column) => column.name === "tool_activities_json")) {
+    database.exec("ALTER TABLE chat_messages ADD COLUMN tool_activities_json TEXT");
+  }
+
   return database;
 }
 
@@ -82,6 +91,7 @@ function mapMessage(row: MessageRow): ChatMessage {
     content: row.content,
     sources: parseJson<KnowledgeSource[]>(row.sources_json),
     debug: parseJson<RagDebugTrace>(row.debug_json),
+    toolActivities: parseJson<ToolActivity[]>(row.tool_activities_json),
     createdAt: row.created_at,
   };
 }
@@ -152,6 +162,7 @@ export function insertConversationMessage(input: {
   content: string;
   sources?: KnowledgeSource[];
   debug?: RagDebugTrace;
+  toolActivities?: ToolActivity[];
 }): ChatMessage {
   const message: ChatMessage = {
     id: randomUUID(),
@@ -160,6 +171,7 @@ export function insertConversationMessage(input: {
     content: input.content,
     sources: input.sources,
     debug: input.debug,
+    toolActivities: input.toolActivities,
     createdAt: new Date().toISOString(),
   };
 
@@ -168,8 +180,8 @@ export function insertConversationMessage(input: {
     database
       .prepare(
         `INSERT INTO chat_messages
-         (id, conversation_id, role, content, sources_json, debug_json, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (id, conversation_id, role, content, sources_json, debug_json, tool_activities_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         message.id,
@@ -178,6 +190,7 @@ export function insertConversationMessage(input: {
         input.content,
         input.sources ? JSON.stringify(input.sources) : null,
         input.debug ? JSON.stringify(input.debug) : null,
+        input.toolActivities ? JSON.stringify(input.toolActivities) : null,
         message.createdAt,
       );
 
