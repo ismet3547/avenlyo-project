@@ -25,12 +25,18 @@ function redact(value: unknown, key = ""): unknown {
   return value;
 }
 
+export function redactToolAuditMetadata(
+  metadata: Record<string, unknown>,
+): Record<string, unknown> {
+  return redact(metadata) as Record<string, unknown>;
+}
+
 export function appendToolAuditEvent(input: {
   toolRunId?: string | null;
   eventType: string;
   metadata?: Record<string, unknown>;
 }) {
-  const metadata = redact(input.metadata ?? {}) as Record<string, unknown>;
+  const metadata = redactToolAuditMetadata(input.metadata ?? {});
 
   getKnowledgeDb()
     .prepare(
