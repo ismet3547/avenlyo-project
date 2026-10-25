@@ -1,0 +1,283 @@
+import { randomUUID } from "node:crypto";
+import { getKnowledgeDb } from "../rag/db";
+import { hashToolArguments, canonicalJson } from "./arguments";
+import {
+  getRegisteredTool,
+  listRegisteredTools,
+  toCatalogItem,
+} from "./registry";
+import { toStrictJsonSchema } from "./schemas";
+import type {
+  ToolCatalogItem,
+  ToolRiskLevel,
+  ToolRunRecord,
+  ToolRunStatus,
+} from "./types";
+
+type ToolRow = {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  kind: ToolCatalogItem["kind"];
+  risk_level: ToolRiskLevel;
+  approval_policy: ToolCatalogItem["approvalPolicy"];
+  input_schema_json: string;
+  output_schema_json: string | null;
+  config_json: string;
+  builtin: number;
+  enabled: number;
+};
+
+type ToolRunRow = {
+  id: string;
+  trace_id: string;
+  conversation_id: string | null;
+  message_id: string | null;
+  agent_id: string;
+  tool_id: string;
+  call_id: string | null;
+  status: ToolRunStatus;
+  risk_level: ToolRiskLevel;
+  arguments_json: string;
+  arguments_hash: string;
+  result_json: string | null;
+  error_code: string | null;
+  idempotency_key: string;
+  requires_approval: number;
+  approval_id: string | null;
+  attempt_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+};
+
+function mapRun(row: ToolRunRow): ToolRunRecord {
+  return {
+    id: row.id,
+    traceId: row.trace_id,
+    conversationId: row.conversation_id,
+    messageId: row.message_id,
+    agentId: row.agent_id,
+    toolId: row.tool_id,
+    callId: row.call_id,
+    status: row.status,
+    riskLevel: row.risk_level,
+    argumentsJson: row.arguments_json,
+    argumentsHash: row.arguments_hash,
+    resultJson: row.result_json,
+    errorCode: row.error_code,
+    idempotencyKey: row.idempotency_key,
+    requiresApproval: row.requires_approval === 1,
+    approvalId: row.approval_id,
+    attemptCount: row.attempt_count,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    createdAt: row.created_at,
+  };
+}
+
+export function syncRegisteredTools() {
+  const database = getKnowledgeDb();
+  const upsert = database.prepare(`
+    INSERT INTO tools (
+      id, name, display_name, description, kind, risk_level, approval_policy,
+      input_schema_json, output_schema_json, config_json, builtin, enabled,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      display_name = excluded.display_name,
+      description = excluded.description,
+      kind = excluded.kind,
+      risk_level = excluded.risk_level,
+      approval_policy = excluded.approval_policy,
+      input_schema_json = excluded.input_schema_json,
+      output_schema_json = excluded.output_schema_json,
+      config_json = excluded.config_json,
+      updated_at = excluded.updated_at
+  `);
+
+  const now = new Date().toISOString();
+  const transaction = database.transaction(() => {
+    for (const definition of listRegisteredTools()) {
+      upsert.run(
+        definition.id,
+        definition.name,
+        definition.displayName,
+        definition.description,
+        definition.kind,
+        definition.riskLevel,
+        definition.approvalPolicy,
+        JSON.stringify(toStrictJsonSchema(definition.inputSchema)),
+        definition.outputSchema
+          ? JSON.stringify(toStrictJsonSchema(definition.outputSchema))
+          : null,
+        JSON.stringify(definition.config),
+        now,
+        now,
+      );
+    }
+  });
+
+  transaction();
+}
+
+export function listToolCatalog(): ToolCatalogItem[] {
+  syncRegisteredTools();
+  const rows = getKnowledgeDb()
+    .prepare("SELECT * FROM tools ORDER BY display_name ASC")
+    .all() as ToolRow[];
+
+  return rows
+    .map((row) => {
+      const definition = getRegisteredTool(row.id);
+      if (!definition) return null;
+
+      return toCatalogItem(definition, {
+        enabled: row.enabled === 1,
+        builtin: row.builtin === 1,
+      });
+    })
+    .filter((item): item is ToolCatalogItem => item !== null);
+}
+
+export function getToolEnabled(toolId: string) {
+  syncRegisteredTools();
+  const row = getKnowledgeDb()
+    .prepare("SELECT enabled FROM tools WHERE id = ?")
+    .get(toolId) as { enabled: number } | undefined;
+  return row?.enabled === 1;
+}
+
+export function setToolEnabled(toolId: string, enabled: boolean) {
+  syncRegisteredTools();
+  const result = getKnowledgeDb()
+    .prepare("UPDATE tools SET enabled = ?, updated_at = ? WHERE id = ?")
+    .run(enabled ? 1 : 0, new Date().toISOString(), toolId);
+  return result.changes > 0;
+}
+
+export function getAgentToolIds(agentId: string) {
+  syncRegisteredTools();
+  const rows = getKnowledgeDb()
+    .prepare(
+      `SELECT tool_id FROM agent_tools
+       WHERE agent_id = ? AND enabled = 1
+       ORDER BY created_at ASC`,
+    )
+    .all(agentId) as Array<{ tool_id: string }>;
+
+  return rows.map((row) => row.tool_id);
+}
+
+export function getEnabledAgentToolIds(agentId: string) {
+  syncRegisteredTools();
+  const rows = getKnowledgeDb()
+    .prepare(
+      `SELECT at.tool_id
+       FROM agent_tools at
+       JOIN tools t ON t.id = at.tool_id
+       WHERE at.agent_id = ?
+         AND at.enabled = 1
+         AND t.enabled = 1
+       ORDER BY at.created_at ASC`,
+    )
+    .all(agentId) as Array<{ tool_id: string }>;
+
+  return rows.map((row) => row.tool_id);
+}
+
+export function setAgentToolIds(agentId: string, toolIds: string[]) {
+  syncRegisteredTools();
+  const database = getKnowledgeDb();
+  const uniqueIds = [...new Set(toolIds)];
+
+  const validRows = uniqueIds.length
+    ? (database
+        .prepare(
+          `SELECT id FROM tools
+           WHERE enabled = 1
+             AND id IN (${uniqueIds.map(() => "?").join(",")})`,
+        )
+        .all(...uniqueIds) as Array<{ id: string }>)
+    : [];
+
+  const validIds = validRows.map((row) => row.id);
+  const remove = database.prepare("DELETE FROM agent_tools WHERE agent_id = ?");
+  const insert = database.prepare(
+    "INSERT INTO agent_tools (agent_id, tool_id, enabled, created_at) VALUES (?, ?, 1, ?)",
+  );
+
+  database.transaction(() => {
+    remove.run(agentId);
+    const now = new Date().toISOString();
+    for (const toolId of validIds) insert.run(agentId, toolId, now);
+  })();
+
+  return validIds;
+}
+
+export function deleteAgentToolAssignments(agentId: string) {
+  return (
+    getKnowledgeDb()
+      .prepare("DELETE FROM agent_tools WHERE agent_id = ?")
+      .run(agentId).changes > 0
+  );
+}
+
+export function createToolRun(input: {
+  traceId?: string;
+  conversationId?: string | null;
+  messageId?: string | null;
+  agentId: string;
+  toolId: string;
+  callId?: string | null;
+  status?: ToolRunStatus;
+  riskLevel: ToolRiskLevel;
+  arguments: unknown;
+  requiresApproval: boolean;
+}): ToolRunRecord {
+  syncRegisteredTools();
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  const traceId = input.traceId || randomUUID();
+  const argumentsJson = canonicalJson(input.arguments);
+  const argumentsHash = hashToolArguments(input.arguments);
+  const idempotencyKey = randomUUID();
+
+  getKnowledgeDb()
+    .prepare(
+      `INSERT INTO tool_runs (
+        id, trace_id, conversation_id, message_id, agent_id, tool_id, call_id,
+        status, risk_level, arguments_json, arguments_hash, result_json,
+        error_code, idempotency_key, requires_approval, approval_id,
+        attempt_count, started_at, completed_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, 0, NULL, NULL, ?)`,
+    )
+    .run(
+      id,
+      traceId,
+      input.conversationId ?? null,
+      input.messageId ?? null,
+      input.agentId,
+      input.toolId,
+      input.callId ?? null,
+      input.status ?? "proposed",
+      input.riskLevel,
+      argumentsJson,
+      argumentsHash,
+      idempotencyKey,
+      input.requiresApproval ? 1 : 0,
+      now,
+    );
+
+  return getToolRun(id)!;
+}
+
+export function getToolRun(id: string): ToolRunRecord | null {
+  const row = getKnowledgeDb()
+    .prepare("SELECT * FROM tool_runs WHERE id = ?")
+    .get(id) as ToolRunRow | undefined;
+  return row ? mapRun(row) : null;
+}

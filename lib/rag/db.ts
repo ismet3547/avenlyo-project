@@ -184,6 +184,98 @@ function createDatabase() {
       created_at TEXT NOT NULL,
       PRIMARY KEY(agent_id, document_id)
     );
+
+    CREATE TABLE IF NOT EXISTS tools (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('local', 'http', 'webhook', 'oauth_http')),
+      risk_level TEXT NOT NULL CHECK(risk_level IN ('read', 'sensitive_read', 'write', 'destructive', 'external_share')),
+      approval_policy TEXT NOT NULL CHECK(approval_policy IN ('never', 'always', 'writes')),
+      input_schema_json TEXT NOT NULL,
+      output_schema_json TEXT,
+      config_json TEXT NOT NULL DEFAULT '{}',
+      builtin INTEGER NOT NULL DEFAULT 1,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_tools (
+      agent_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL REFERENCES tools(id) ON DELETE CASCADE,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY(agent_id, tool_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_tools_agent
+      ON agent_tools(agent_id);
+
+    CREATE TABLE IF NOT EXISTS tool_runs (
+      id TEXT PRIMARY KEY,
+      trace_id TEXT NOT NULL,
+      conversation_id TEXT,
+      message_id TEXT,
+      agent_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL REFERENCES tools(id),
+      call_id TEXT,
+      status TEXT NOT NULL CHECK(status IN ('proposed', 'approval_required', 'approved', 'rejected', 'running', 'success', 'failed', 'cancelled')),
+      risk_level TEXT NOT NULL,
+      arguments_json TEXT NOT NULL,
+      arguments_hash TEXT NOT NULL,
+      result_json TEXT,
+      error_code TEXT,
+      idempotency_key TEXT NOT NULL,
+      requires_approval INTEGER NOT NULL DEFAULT 0,
+      approval_id TEXT,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tool_runs_conversation
+      ON tool_runs(conversation_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_tool_runs_agent
+      ON tool_runs(agent_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS tool_approvals (
+      id TEXT PRIMARY KEY,
+      tool_run_id TEXT NOT NULL REFERENCES tool_runs(id) ON DELETE CASCADE,
+      decision TEXT NOT NULL CHECK(decision IN ('pending', 'approved', 'rejected', 'expired')),
+      arguments_hash TEXT NOT NULL,
+      approved_at TEXT,
+      rejected_at TEXT,
+      expires_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tool_run_attempts (
+      id TEXT PRIMARY KEY,
+      tool_run_id TEXT NOT NULL REFERENCES tool_runs(id) ON DELETE CASCADE,
+      attempt_number INTEGER NOT NULL,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      duration_ms INTEGER,
+      http_status INTEGER,
+      outcome TEXT NOT NULL,
+      error_code TEXT,
+      UNIQUE(tool_run_id, attempt_number)
+    );
+
+    CREATE TABLE IF NOT EXISTS tool_audit_events (
+      id TEXT PRIMARY KEY,
+      tool_run_id TEXT REFERENCES tool_runs(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tool_audit_run
+      ON tool_audit_events(tool_run_id, created_at ASC);
   `);
 
   ensureColumn(database, "documents", "extraction_method", "TEXT");
@@ -201,7 +293,7 @@ function createDatabase() {
   );
   ensureColumn(database, "chunks", "ocr_confidence", "REAL");
 
-  database.pragma("user_version = 2");
+  database.pragma("user_version = 3");
   return database;
 }
 
