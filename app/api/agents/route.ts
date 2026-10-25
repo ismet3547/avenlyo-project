@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAgent, deleteAgent, readData, updateAgent } from "@/lib/store";
 import { setAgentDocumentIds } from "@/lib/rag/db";
+import { deleteAgentConversations } from "@/lib/chat/store";
 
 function text(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
@@ -70,5 +71,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "Ajan bulunamadı." }, { status: 404 });
   }
 
+  setAgentDocumentIds(id, []);
+  deleteAgentConversations(id);
   return NextResponse.json({ ok: true });
 }
