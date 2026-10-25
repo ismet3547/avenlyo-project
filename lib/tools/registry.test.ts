@@ -34,6 +34,6 @@ describe("tool registry strict schemas", () => {
 
     expect(required).toEqual(["name", "phone", "email", "notes"]);
     expect(catalog.inputSchema.additionalProperties).toBe(false);
-    expect(catalog.executionReady).toBe(false);
+    expect(catalog.executionReady).toBe(true);
   });
 });
