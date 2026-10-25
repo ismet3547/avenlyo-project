@@ -16,10 +16,15 @@ import {
 } from "@/lib/chat/store";
 import { getToolLimits } from "@/lib/tools/config";
 import {
+  attachToolRunMessage,
+  saveToolApprovalResumeItems,
+} from "@/lib/tools/db";
+import {
   getExecutableToolsForAgent,
   toOpenAiFunctionTool,
 } from "@/lib/tools/openai";
 import { handleModelFunctionCall } from "@/lib/tools/orchestrator";
+import { getRegisteredTool } from "@/lib/tools/registry";
 import { streamResponsesTurn } from "@/lib/tools/responses";
 import type { ChatMessage, ToolActivity } from "@/lib/types";
 
@@ -139,6 +144,7 @@ export async function POST(request: Request) {
   let message = requestedMessage;
   let history: ChatMessage[] = [];
   let userMessage: ChatMessage | null = null;
+  let regenerateToolContext = "";
 
   if (regenerate) {
     if (!conversation) {
@@ -146,6 +152,33 @@ export async function POST(request: Request) {
         { error: "Yeniden oluşturmak için bir sohbet gerekli." },
         { status: 400 },
       );
+    }
+
+    const existingBeforeDelete = listConversationMessages(conversation.id);
+    const previousAssistant = [...existingBeforeDelete]
+      .reverse()
+      .find((item) => item.role === "assistant");
+
+    const reusableWriteResults = (previousAssistant?.toolActivities || []).filter(
+      (activity) => {
+        const definition = getRegisteredTool(activity.toolName);
+        return (
+          activity.status === "success" &&
+          definition !== null &&
+          (definition.riskLevel === "write" ||
+            definition.riskLevel === "destructive" ||
+            definition.riskLevel === "external_share")
+        );
+      },
+    );
+
+    if (reusableWriteResults.length) {
+      regenerateToolContext = [
+        "YENİDEN OLUŞTURMA TOOL SONUÇLARI",
+        "Aşağıdaki write sonuçları önceki yanıtta zaten gerçekleştirilmiştir.",
+        "Bu işlemleri tekrar çağırma; yalnız mevcut sonuçları kullan:",
+        JSON.stringify(reusableWriteResults),
+      ].join("\n");
     }
 
     deleteLastAssistantMessage(conversation.id);
@@ -182,7 +215,13 @@ export async function POST(request: Request) {
   const sources = sourcesFromRetrieved(retrieved);
   const business = businessContext(data.business);
   const debugEnabled = process.env.AVENLYO_RAG_DEBUG === "true";
-  const executableDefinitions = getExecutableToolsForAgent(agent.id);
+  const allExecutableDefinitions = getExecutableToolsForAgent(agent.id);
+  const executableDefinitions = regenerate
+    ? allExecutableDefinitions.filter((definition) =>
+        definition.riskLevel === "read" ||
+        definition.riskLevel === "sensitive_read",
+      )
+    : allExecutableDefinitions;
   const openAiTools = executableDefinitions.map(toOpenAiFunctionTool);
   const limits = getToolLimits();
 
@@ -204,6 +243,7 @@ export async function POST(request: Request) {
       ].join(" "),
     business && `\nİŞLETME BAĞLAMI\n${business}`,
     ragContext && `\nBİLGİ TABANI BAĞLAMI\n${ragContext}`,
+    regenerateToolContext && `\n${regenerateToolContext}`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -222,6 +262,7 @@ export async function POST(request: Request) {
       let replayItems: unknown[] = [];
       let toolCallCount = 0;
       let completed = false;
+      let pausedForApproval = false;
 
       const push = (value: unknown) => {
         controller.enqueue(encoder.encode(streamLine(value)));
@@ -311,8 +352,53 @@ export async function POST(request: Request) {
             });
 
             pushActivity(outcome.activity);
-            replayItems.push(outcome.functionOutput);
+
+            if (outcome.approvalRequired) {
+              saveToolApprovalResumeItems(
+                outcome.approvalRequired.toolRunId,
+                turn.outputItems,
+              );
+
+              const pendingMessage = insertConversationMessage({
+                conversationId: conversation!.id,
+                role: "assistant",
+                content: assistantText,
+                sources,
+                debug: debugEnabled ? retrieval.debug : undefined,
+                toolActivities,
+              });
+
+              attachToolRunMessage(
+                outcome.approvalRequired.toolRunId,
+                pendingMessage.id!,
+              );
+
+              push({
+                type: "done",
+                message: pendingMessage,
+                conversation:
+                  getConversation(conversation!.id) ?? conversation,
+                confidence: retrieval.confidence,
+                approvalRequired: {
+                  toolRunId: outcome.approvalRequired.toolRunId,
+                },
+              });
+
+              pausedForApproval = true;
+              completed = true;
+              break;
+            }
+
+            if (outcome.functionOutput) {
+              replayItems.push(outcome.functionOutput);
+            }
           }
+
+          if (pausedForApproval) break;
+        }
+
+        if (pausedForApproval) {
+          return;
         }
 
         if (!completed) {
