@@ -49,7 +49,7 @@ function Icon({
   name,
   size = 18,
 }: {
-  name: "home" | "business" | "knowledge" | "agents" | "plus" | "arrow" | "spark" | "check" | "trash" | "edit" | "send" | "menu" | "upload" | "refresh";
+  name: "home" | "business" | "knowledge" | "tools" | "agents" | "plus" | "arrow" | "spark" | "check" | "trash" | "edit" | "send" | "menu" | "upload" | "refresh";
   size?: number;
 }) {
   const paths: Record<string, React.ReactNode> = {
