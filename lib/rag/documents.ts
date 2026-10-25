@@ -68,7 +68,8 @@ async function extractPdf(buffer: Buffer): Promise<{
       })),
     };
   } finally {
-    await pdf.destroy();
+    const destroy = (pdf as unknown as { destroy?: () => void | Promise<void> }).destroy;
+    if (destroy) await destroy.call(pdf);
   }
 }
 
