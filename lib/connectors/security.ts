@@ -101,14 +101,19 @@ export function resolveConnectorUrl(baseUrl: URL, fixedPath: string) {
   return target;
 }
 
+type ConnectorResolver = (hostname: string) => Promise<LookupAddress[]>;
+
+const defaultResolver: ConnectorResolver = async (hostname) =>
+  (await dnsLookup(hostname, {
+    all: true,
+    family: 4,
+  })) as LookupAddress[];
+
 export async function resolvePinnedPublicIpv4(
   hostname: string,
-  resolver: (
-    hostname: string,
-    options: { all: true; family: 4 },
-  ) => Promise<LookupAddress[]> = dnsLookup as typeof dnsLookup,
+  resolver: ConnectorResolver = defaultResolver,
 ) {
-  const addresses = await resolver(hostname, { all: true, family: 4 });
+  const addresses = await resolver(hostname);
 
   if (!addresses.length) {
     throw new Error("CONNECTOR_DNS_NO_IPV4");
