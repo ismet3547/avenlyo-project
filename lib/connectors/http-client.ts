@@ -71,8 +71,7 @@ export async function requestConnectorJson(
         lookup,
         servername: base.hostname,
         timeout: timeoutMs,
-        maxRedirects: 0,
-      } as https.RequestOptions & { maxRedirects?: number },
+      },
       (response) => {
         const statusCode = response.statusCode ?? 0;
 
