@@ -2107,6 +2107,9 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                             {connector.env.secret && (
                               <code>{connector.env.secret}</code>
                             )}
+                            {connector.env.healthPath && (
+                              <code>{connector.env.healthPath}</code>
+                            )}
                           </div>
 
                           {result && (
