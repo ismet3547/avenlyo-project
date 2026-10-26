@@ -17,6 +17,7 @@ const definitions: ConnectorDefinition[] = [
       required: false,
     },
     healthPath: "/health",
+    healthPathEnv: "AVENLYO_CONNECTOR_HTTP_HEALTH_PATH",
     testable: true,
     outboundMode: "read",
   },
@@ -123,6 +124,7 @@ export function toConnectorPublicItem(
         definition.auth.type === "bearer_env"
           ? definition.auth.secretEnv
           : null,
+      healthPath: definition.healthPathEnv ?? null,
     },
   };
 }
