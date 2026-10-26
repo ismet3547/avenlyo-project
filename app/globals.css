@@ -479,7 +479,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: var(--panel-2);
   border: 1px solid var(--line);
   color: var(--soft);
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 850;
   letter-spacing: .05em;
 }
@@ -495,7 +495,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
+  font-size: 16px;
 }
 .document-meta {
   display: flex;
@@ -824,7 +824,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .debug-stats span {
   display: block;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 10.5px;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .06em;
@@ -1367,7 +1367,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-color: transparent;
   background: #f7f9fc;
   color: #657386;
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 750;
 }
 .message-actions button:hover {
@@ -1443,7 +1443,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-size: 10.5px;
 }
 .debug-candidate-main small {
-  font-size: 9.5px;
+  font-size: 11px;
 }
 .debug-preview {
   margin-top: 7px;
@@ -1619,8 +1619,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .tool-card > p {
   margin: 17px 0;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
+  font-size: 13.5px;
+  line-height: 1.65;
 }
 .tool-toggle {
   min-width: 112px;
@@ -1785,7 +1785,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 999px;
   background: #f2f4f7;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 9.5px;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -1995,8 +1995,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 .tool-picker-note {
   margin-top: 12px;
-  font-size: 11.5px;
-  line-height: 1.55;
+  font-size: 13px;
+  line-height: 1.6;
 }
 .knowledge-option-check {
   width: 24px;
@@ -2248,7 +2248,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   align-items: center;
   gap: 7px;
   cursor: pointer;
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 800;
 }
 .tools-tabs button:hover {
@@ -2313,7 +2313,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .operations-toolbar h2,
 .crm-overview-card h2 {
   margin: 4px 0 0;
-  font-size: 21px;
+  font-size: 24px;
   letter-spacing: -.025em;
 }
 .operations-actions {
@@ -2427,7 +2427,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-radius: 999px;
   background: #eef2f6;
   color: var(--soft);
-  font-size: 9px;
+  font-size: 10.5px;
   font-style: normal;
   font-weight: 800;
   white-space: nowrap;
@@ -2839,7 +2839,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   gap: 14px;
 }
 .connector-card {
-  padding: 19px;
+  padding: 22px;
   border: 1px solid var(--line);
   border-radius: 15px;
   background: #ffffff;
@@ -2913,7 +2913,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 .connector-meta-grid > div {
   min-width: 0;
-  padding: 9px 10px;
+  padding: 11px 12px;
   border: 1px solid #e4e9ef;
   border-radius: 9px;
   background: #fbfcfd;
@@ -2932,15 +2932,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .connector-meta-grid strong {
   margin-top: 4px;
   color: var(--text);
-  font-size: 10px;
-  line-height: 1.4;
+  font-size: 12px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 .connector-env {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+  gap: 7px;
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid #edf0f3;
@@ -2952,11 +2952,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-weight: 800;
 }
 .connector-env code {
-  padding: 4px 6px;
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
   border-radius: 6px;
   background: #f2f5f8;
   color: var(--soft);
-  font-size: 8.5px;
+  font-size: 10.5px;
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 .connector-error,
@@ -2964,8 +2967,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   margin-top: 11px;
   padding: 10px 11px;
   border-radius: 9px;
-  font-size: 10px;
-  line-height: 1.45;
+  font-size: 11.5px;
+  line-height: 1.55;
 }
 .connector-error,
 .connector-test-result.failed {
@@ -2990,7 +2993,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .connector-test-result small {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 8.5px;
+  font-size: 10px;
 }
 .connector-card-actions {
   min-height: 38px;
@@ -3000,12 +3003,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   justify-content: flex-end;
 }
 .connector-test-button {
-  min-height: 36px;
-  font-size: 10px;
+  min-height: 40px;
+  font-size: 11.5px;
 }
 .connector-planned {
   color: var(--muted);
-  font-size: 9.5px;
+  font-size: 11px;
   font-weight: 700;
 }
 .connector-note {
