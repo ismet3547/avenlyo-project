@@ -133,6 +133,7 @@ function createDatabase() {
 
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
+  database.pragma("busy_timeout = 5000");
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS documents (
