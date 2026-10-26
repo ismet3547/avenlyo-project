@@ -71,10 +71,10 @@ function safeConfiguredUrl(definition: ConnectorDefinition) {
         error: "Connector URL içinde kullanıcı bilgisi bulunamaz.",
       };
     }
-    if (url.hash) {
+    if (url.hash || url.search) {
       return {
         url: null,
-        error: "Connector URL fragment içeremez.",
+        error: "Connector base URL query veya fragment içeremez.",
       };
     }
 
