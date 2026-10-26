@@ -1,5 +1,5 @@
-import { appendToolAuditEvent } from "@/lib/tools/audit";
-import { getToolLimits } from "@/lib/tools/config";
+import { appendToolAuditEvent } from "../tools/audit";
+import { getToolLimits } from "../tools/config";
 import {
   getConfiguredConnector,
   getConnectorDefinition,
