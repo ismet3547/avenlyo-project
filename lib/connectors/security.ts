@@ -68,6 +68,9 @@ export function validateConnectorBaseUrl(url: URL) {
   if (url.hash) {
     throw new Error("CONNECTOR_FRAGMENT_BLOCKED");
   }
+  if (url.search) {
+    throw new Error("CONNECTOR_QUERY_BLOCKED");
+  }
   if (!url.hostname || url.hostname.length > 253) {
     throw new Error("CONNECTOR_HOST_INVALID");
   }
@@ -85,7 +88,9 @@ export function resolveConnectorUrl(baseUrl: URL, fixedPath: string) {
   if (
     !fixedPath.startsWith("/") ||
     fixedPath.startsWith("//") ||
-    fixedPath.includes("\\")
+    fixedPath.includes("\\") ||
+    fixedPath.includes("?") ||
+    fixedPath.includes("#")
   ) {
     throw new Error("CONNECTOR_PATH_INVALID");
   }
@@ -136,6 +141,7 @@ export function connectorErrorMessage(error: unknown) {
     CONNECTOR_USERINFO_BLOCKED:
       "Connector URL içinde kullanıcı adı veya parola bulunamaz.",
     CONNECTOR_FRAGMENT_BLOCKED: "Connector URL fragment içeremez.",
+    CONNECTOR_QUERY_BLOCKED: "Connector base URL query içeremez.",
     CONNECTOR_HOST_INVALID: "Connector hostname geçersiz.",
     CONNECTOR_PATH_INVALID: "Connector endpoint yolu geçersiz.",
     CONNECTOR_ORIGIN_MISMATCH:
