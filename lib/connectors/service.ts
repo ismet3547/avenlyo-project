@@ -55,7 +55,12 @@ export async function testConnector(id: string): Promise<ConnectorTestResult> {
   try {
     const response = await requestConnectorJson({
       baseUrl: url,
-      path: definition.healthPath || "/health",
+      path:
+        (definition.healthPathEnv
+          ? process.env[definition.healthPathEnv]?.trim()
+          : null) ||
+        definition.healthPath ||
+        "/health",
       method: "GET",
       bearerToken,
       timeoutMs: getToolLimits().httpTimeoutMs,
