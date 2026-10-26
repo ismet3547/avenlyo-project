@@ -286,3 +286,39 @@ Operasyon API'leri read-only'dir:
 - `GET /api/crm/contacts?limit=250`
 
 UI'ye idempotency key veya raw approval continuation verisi gönderilmez. Yerel CRM görünümü bu aşamada salt okunurdur; düzenleme/silme ayrı write/destructive policy gerektirecektir.
+
+
+## HTTP / Webhook Connector Foundation
+
+`/araclar → Bağlantılar` sekmesi, harici sistemler için güvenli connector temelini gösterir.
+
+İlk iki profil:
+
+- **Harici HTTP API**: JSON tabanlı read connector; güvenli bağlantı testi desteklenir.
+- **Outbound Webhook**: write/external-share profili; bu aşamada gönderim executor'ı bağlı değildir.
+
+Server-side yapılandırma:
+
+```env
+AVENLYO_CONNECTOR_HTTP_BASE_URL=https://api.example.com
+AVENLYO_CONNECTOR_HTTP_HEALTH_PATH=/health
+AVENLYO_CONNECTOR_HTTP_BEARER_TOKEN=
+AVENLYO_CONNECTOR_WEBHOOK_URL=https://hooks.example.com
+AVENLYO_CONNECTOR_WEBHOOK_BEARER_TOKEN=
+```
+
+Güvenlik sınırları:
+
+- Connector hedefi model argümanı değildir; yalnız server env'den gelir.
+- HTTPS zorunludur.
+- URL userinfo, query ve fragment içeremez.
+- Endpoint path server env/kod ile sabittir; arbitrary URL/path kabul edilmez.
+- DNS A kayıtları kontrol edilir ve private/local/special IPv4 bloklanır.
+- HTTP bağlantısı doğrulanmış public IPv4 adresine custom DNS lookup ile pinlenir.
+- Redirect otomatik takip edilmez; 3xx yanıtlar reddedilir.
+- Yanıt boyutu varsayılan 256 KB ile sınırlıdır.
+- HTTP JSON connector yalnız JSON content-type kabul eder.
+- Bearer secret yalnız server environment'tan okunur; connector API/UI secret değerini döndürmez.
+- Connector test audit event'leri host/status/süre taşır, Authorization değeri taşımaz.
+
+Bu aşamada connector'lar henüz model tool executor'larına bağlanmamıştır. Bir sonraki milestone, sabit connector profiline bağlı read-only HTTP tool ve ardından approval-gated webhook delivery olacaktır.

@@ -7,6 +7,7 @@ import { MarkdownMessage } from "@/components/markdown-message";
 import { TextSourceViewer } from "@/components/text-source-viewer";
 import type { Agent, BusinessProfile, ChatMessage, Conversation, KnowledgeDocument, ToolActivity } from "@/lib/types";
 import type { CrmContact, ToolCatalogItem, ToolFeatureFlags, ToolOperationsSummary, ToolRunDetail, ToolRunStatus, ToolRunSummary } from "@/lib/tools/types";
+import type { ConnectorPublicItem, ConnectorTestResult } from "@/lib/connectors/types";
 
 const PdfSourceViewer = dynamic(
   () =>
@@ -17,7 +18,7 @@ const PdfSourceViewer = dynamic(
 );
 
 type View = "overview" | "business" | "knowledge" | "tools" | "agents";
-type ToolsTab = "catalog" | "runs" | "crm";
+type ToolsTab = "catalog" | "runs" | "crm" | "connections";
 
 const emptyBusiness: BusinessProfile = {
   name: "",
@@ -327,6 +328,9 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
   const [toolRunDetailLoading, setToolRunDetailLoading] = useState(false);
   const [runStatusFilter, setRunStatusFilter] = useState<"all" | ToolRunStatus>("all");
   const [crmSearch, setCrmSearch] = useState("");
+  const [connectors, setConnectors] = useState<ConnectorPublicItem[]>([]);
+  const [connectorTestingId, setConnectorTestingId] = useState<string | null>(null);
+  const [connectorResults, setConnectorResults] = useState<Record<string, ConnectorTestResult>>({});
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [agentKnowledgeIds, setAgentKnowledgeIds] = useState<string[]>([]);
@@ -365,13 +369,17 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
       fetch("/api/agents").then((response) => response.json()),
       fetch("/api/knowledge").then((response) => response.json()),
       fetch("/api/tools").then((response) => response.json()),
+      fetch("/api/connectors").then((response) => response.json()),
     ])
-      .then(([businessData, agentData, knowledgeData, toolsData]) => {
+      .then(([businessData, agentData, knowledgeData, toolsData, connectorData]) => {
         setBusiness(businessData);
         setAgents(agentData);
         setDocuments(Array.isArray(knowledgeData) ? knowledgeData : []);
         setToolsCatalog(Array.isArray(toolsData?.tools) ? toolsData.tools : []);
         setToolFlags(toolsData?.flags ?? null);
+        setConnectors(
+          Array.isArray(connectorData?.connectors) ? connectorData.connectors : [],
+        );
       })
       .finally(() => setLoading(false));
   }, []);
@@ -444,6 +452,69 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
     };
     setMobileNav(false);
     router.push(routes[next]);
+  }
+
+  async function refreshConnectors() {
+    try {
+      const response = await fetch("/api/connectors");
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Connector kataloğu yüklenemedi.");
+      }
+      setConnectors(Array.isArray(data.connectors) ? data.connectors : []);
+    } catch (error) {
+      flash(
+        error instanceof Error
+          ? error.message
+          : "Connector kataloğu yüklenemedi.",
+      );
+    }
+  }
+
+  async function testConnectorConnection(connectorId: string) {
+    if (connectorTestingId) return;
+    setConnectorTestingId(connectorId);
+
+    try {
+      const response = await fetch(
+        `/api/connectors/${encodeURIComponent(connectorId)}/test`,
+        { method: "POST" },
+      );
+      const data = (await response.json()) as ConnectorTestResult & {
+        error?: string;
+      };
+
+      const result: ConnectorTestResult = {
+        connectorId,
+        ok: Boolean(data.ok),
+        statusCode:
+          typeof data.statusCode === "number" ? data.statusCode : null,
+        durationMs:
+          typeof data.durationMs === "number" ? data.durationMs : 0,
+        hostname:
+          typeof data.hostname === "string" ? data.hostname : null,
+        message:
+          typeof data.message === "string"
+            ? data.message
+            : data.error || "Connector testi tamamlanamadı.",
+      };
+
+      setConnectorResults((current) => ({
+        ...current,
+        [connectorId]: result,
+      }));
+
+      flash(result.message);
+    } catch (error) {
+      flash(
+        error instanceof Error
+          ? error.message
+          : "Connector testi tamamlanamadı.",
+      );
+    } finally {
+      setConnectorTestingId(null);
+      void refreshConnectors();
+    }
   }
 
   async function refreshToolOperations() {
@@ -1666,6 +1737,16 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   Yerel CRM
                   <span>{toolOpsSummary?.crmContacts ?? crmContacts.length}</span>
                 </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={toolsTab === "connections"}
+                  className={toolsTab === "connections" ? "active" : ""}
+                  onClick={() => setToolsTab("connections")}
+                >
+                  Bağlantılar
+                  <span>{connectors.filter((connector) => connector.configured).length}</span>
+                </button>
               </div>
 
               {toolsTab === "catalog" && (
@@ -1925,6 +2006,169 @@ export function Studio({ initialView = "overview" }: { initialView?: View }) {
                   )}
                 </div>
               )}
+
+              {toolsTab === "connections" && (
+                <div className="connections-panel">
+                  <div className="connector-foundation-card">
+                    <div>
+                      <span className="eyebrow accent">HTTP / WEBHOOK FOUNDATION</span>
+                      <h2>Harici bağlantılar</h2>
+                      <p>
+                        Connector hedefleri model veya kullanıcı mesajından gelmez.
+                        Origin ve secret yalnız sunucu ortam değişkenlerinden okunur;
+                        outbound istekler HTTPS, SSRF policy, DNS doğrulama ve pinned IP
+                        üzerinden çalışır.
+                      </p>
+                    </div>
+                    <span className="connector-foundation-badge">
+                      {connectors.filter((connector) => connector.configured).length}
+                      /{connectors.length} yapılandırılmış
+                    </span>
+                  </div>
+
+                  <div className="connector-security-strip">
+                    <span><Icon name="check" size={14} /> HTTPS only</span>
+                    <span><Icon name="check" size={14} /> Redirect kapalı</span>
+                    <span><Icon name="check" size={14} /> Public IPv4</span>
+                    <span><Icon name="check" size={14} /> Secret server-side</span>
+                  </div>
+
+                  <div className="connector-grid">
+                    {connectors.map((connector) => {
+                      const result = connectorResults[connector.id];
+                      const isTesting = connectorTestingId === connector.id;
+
+                      return (
+                        <article
+                          className={`connector-card ${connector.configured ? "configured" : ""}`}
+                          key={connector.id}
+                        >
+                          <div className="connector-card-head">
+                            <div className="connector-icon">
+                              <Icon name="tools" size={17} />
+                            </div>
+                            <div>
+                              <strong>{connector.displayName}</strong>
+                              <span>
+                                {connector.kind === "webhook"
+                                  ? "Outbound webhook"
+                                  : "HTTP JSON API"}
+                              </span>
+                            </div>
+                            <i
+                              className={`connector-status ${connector.configured ? "ready" : "missing"}`}
+                            >
+                              {connector.configured
+                                ? "Yapılandırıldı"
+                                : "Yapılandırılmadı"}
+                            </i>
+                          </div>
+
+                          <p>{connector.description}</p>
+
+                          <div className="connector-meta-grid">
+                            <div>
+                              <span>Origin</span>
+                              <strong>{connector.origin || "—"}</strong>
+                            </div>
+                            <div>
+                              <span>Mod</span>
+                              <strong>
+                                {connector.outboundMode === "write"
+                                  ? "Write / external"
+                                  : "Read"}
+                              </strong>
+                            </div>
+                            <div>
+                              <span>Auth</span>
+                              <strong>
+                                {connector.authType === "none"
+                                  ? "Yok"
+                                  : connector.secretConfigured
+                                    ? "Bearer · hazır"
+                                    : "Bearer · secret yok"}
+                              </strong>
+                            </div>
+                            <div>
+                              <span>Host</span>
+                              <strong>{connector.hostname || "—"}</strong>
+                            </div>
+                          </div>
+
+                          {connector.configurationError && (
+                            <div className="connector-error">
+                              {connector.configurationError}
+                            </div>
+                          )}
+
+                          <div className="connector-env">
+                            <span>Sunucu ayarları</span>
+                            <code>{connector.env.baseUrl}</code>
+                            {connector.env.secret && (
+                              <code>{connector.env.secret}</code>
+                            )}
+                            {connector.env.healthPath && (
+                              <code>{connector.env.healthPath}</code>
+                            )}
+                          </div>
+
+                          {result && (
+                            <div
+                              className={`connector-test-result ${result.ok ? "success" : "failed"}`}
+                            >
+                              <strong>
+                                {result.ok ? "Bağlantı başarılı" : "Bağlantı başarısız"}
+                              </strong>
+                              <span>{result.message}</span>
+                              <small>
+                                {result.hostname || "—"}
+                                {result.statusCode !== null
+                                  ? ` · HTTP ${result.statusCode}`
+                                  : ""}
+                                {result.durationMs
+                                  ? ` · ${result.durationMs} ms`
+                                  : ""}
+                              </small>
+                            </div>
+                          )}
+
+                          <div className="connector-card-actions">
+                            {connector.testable ? (
+                              <button
+                                type="button"
+                                className="primary connector-test-button"
+                                disabled={!connector.configured || isTesting}
+                                onClick={() =>
+                                  void testConnectorConnection(connector.id)
+                                }
+                              >
+                                {isTesting ? "Test ediliyor…" : "Bağlantıyı test et"}
+                              </button>
+                            ) : (
+                              <span className="connector-planned">
+                                Gönderim executor'ı sonraki aşama
+                              </span>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+
+                  <div className="tools-note connector-note">
+                    <Icon name="check" size={18} />
+                    <div>
+                      <strong>Arbitrary URL yok</strong>
+                      <span>
+                        Model endpoint, host, header veya secret seçemez. Bu foundation
+                        yalnız operator tarafından sunucuda tanımlanan sabit connector
+                        profillerini kullanır.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             </section>
           )}
 
