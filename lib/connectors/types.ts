@@ -15,6 +15,7 @@ export type ConnectorDefinition = {
         required: boolean;
       };
   healthPath?: string;
+  healthPathEnv?: string;
   testable: boolean;
   outboundMode: "read" | "write";
 };
@@ -35,6 +36,7 @@ export type ConnectorPublicItem = {
   env: {
     baseUrl: string;
     secret: string | null;
+    healthPath: string | null;
   };
 };
 
