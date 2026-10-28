@@ -91,11 +91,9 @@ function parseJson(value: unknown) {
   return JSON.parse(String(value)) as unknown;
 }
 
-async function seedToolDefinitions(connectionString: string) {
-  const pool = new Pool({ connectionString });
-  try {
-    for (const definition of listRegisteredTools()) {
-      await pool.query(
+async function seedToolDefinitionsClient(client: Pick<PoolClient, "query">) {
+  for (const definition of listRegisteredTools()) {
+    await client.query(
         `INSERT INTO app.tool_definitions
          (id,name,display_name,description,kind,risk_level,approval_policy,input_schema,output_schema,config,builtin,platform_enabled)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,true,true)
@@ -125,8 +123,16 @@ async function seedToolDefinitions(connectionString: string) {
           JSON.stringify(definition.config),
         ],
       );
-    }
+  }
+}
+
+async function seedToolDefinitions(connectionString: string) {
+  const pool = new Pool({ connectionString });
+  const client = await pool.connect();
+  try {
+    await seedToolDefinitionsClient(client);
   } finally {
+    client.release();
     await pool.end();
   }
 }
@@ -487,11 +493,11 @@ export async function dryRunLegacyMigration(manifestPath: string) {
   const importerUrl = process.env.DATABASE_IMPORTER_URL || adminUrl;
   if (!adminUrl || !importerUrl) throw new Error("DATABASE_ADMIN_URL tanımlı değil.");
 
-  await seedToolDefinitions(adminUrl);
-  const pool = new Pool({ connectionString: importerUrl });
+  const pool = new Pool({ connectionString: adminUrl });
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await seedToolDefinitionsClient(client);
     await client.query("SET LOCAL ROLE avenlyo_importer");
     await client.query("SELECT set_config('app.workspace_id', $1, true)", [
       manifest.target.workspaceId,
