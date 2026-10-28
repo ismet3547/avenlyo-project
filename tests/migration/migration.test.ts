@@ -95,7 +95,11 @@ describeDb("legacy PostgreSQL migration harness", () => {
       );
       await expect(access(copied)).resolves.toBeUndefined();
 
-      await rollbackLegacyMigration(fixture.manifestPath);
+      await expect(
+        rollbackLegacyMigration(fixture.manifestPath, "wrong-migration-id"),
+      ).rejects.toThrow(/confirm-migration/);
+
+      await rollbackLegacyMigration(fixture.manifestPath, fixture.migrationId);
       const afterRollback = await pool.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM app.workspaces WHERE id=$1",
         [fixture.workspaceId],
