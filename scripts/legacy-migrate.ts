@@ -66,7 +66,10 @@ async function main() {
   }
 
   if (command === "rollback") {
-    await rollbackLegacyMigration(manifestPath);
+    await rollbackLegacyMigration(
+      manifestPath,
+      option("--confirm-migration") || "",
+    );
     console.log("Legacy target workspace ve workspace dosyaları kaldırıldı.");
     return;
   }
@@ -82,7 +85,7 @@ async function main() {
   }
 
   throw new Error(
-    "Kullanım: npm run legacy:migrate -- plan|dry-run|apply|verify|status|rollback",
+    "Kullanım: npm run legacy:migrate -- plan|dry-run|apply|verify|status|rollback (rollback için --confirm-migration <id> zorunlu)",
   );
 }
 
