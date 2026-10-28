@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { hashToolArguments } from "@/lib/tools/arguments";
+import { hashToolArguments } from "../tools/arguments";
 import type { LegacyAgent, MigrationCounts } from "./types";
 
 const COUNT_TABLES: Array<[keyof MigrationCounts, string]> = [
