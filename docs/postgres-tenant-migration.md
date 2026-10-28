@@ -59,10 +59,11 @@ Before runtime cutover, rollback is safe because the legacy source is copied, ne
 
 ```bash
 npm run legacy:migrate -- rollback \
-  --manifest ./migration/legacy-manifest.json
+  --manifest ./migration/legacy-manifest.json \
+  --confirm-migration <manifest-migration-id>
 ```
 
-This deletes the imported target workspace and its workspace-local copied files. It does **not** delete the legacy JSON, SQLite database or original uploads.
+Rollback requires the exact manifest migration ID and verifies the workspace-local migration marker before deletion. It also checks that the target workspace identity still matches the manifest. This deletes only the imported target workspace and its workspace-local copied files. It does **not** delete the legacy JSON, SQLite database or original uploads.
 
 After PostgreSQL starts accepting new production writes, returning to SQLite is not automatically lossless. That future cutover must use write-freeze → final snapshot → import/verify → security smoke tests → runtime switch → write-enable.
 
