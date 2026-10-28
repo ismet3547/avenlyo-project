@@ -9,5 +9,8 @@ data/*.tmp
 data/knowledge.db
 data/knowledge.db-*
 data/uploads/
+data/workspaces/
+migration/snapshots/
+migration/*.json
 *.log
 .DS_Store
