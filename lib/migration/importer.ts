@@ -1,8 +1,8 @@
 import { mkdir, rename, rm, cp } from "node:fs/promises";
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
-import { listRegisteredTools } from "@/lib/tools/registry";
-import { toStrictJsonSchema } from "@/lib/tools/schemas";
+import { listRegisteredTools } from "../tools/registry";
+import { toStrictJsonSchema } from "../tools/schemas";
 import { readLegacyAppData } from "./source-json";
 import { openLegacySqlite, readLegacyTable } from "./source-sqlite";
 import { uploadFileForDocument } from "./source-files";
