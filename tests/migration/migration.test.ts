@@ -6,13 +6,13 @@ import {
   applyLegacyMigration,
   dryRunLegacyMigration,
   rollbackLegacyMigration,
-} from "@/lib/migration/importer";
-import { planLegacyMigration } from "@/lib/migration/planner";
-import { readMigrationManifest } from "@/lib/migration/manifest";
+} from "../../lib/migration/importer";
+import { planLegacyMigration } from "../../lib/migration/planner";
+import { readMigrationManifest } from "../../lib/migration/manifest";
 import {
   verifyAndCheckpoint,
   verifyLegacySource,
-} from "@/lib/migration/verifier";
+} from "../../lib/migration/verifier";
 import { createLegacyFixture } from "./fixture";
 
 const url = process.env.TEST_DATABASE_URL;
