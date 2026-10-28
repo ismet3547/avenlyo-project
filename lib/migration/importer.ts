@@ -1,4 +1,4 @@
-import { mkdir, rename, rm, cp } from "node:fs/promises";
+import { cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { listRegisteredTools } from "../tools/registry";
@@ -459,20 +459,37 @@ async function copyWorkspaceFiles(
     `.${manifest.target.workspaceId}.${manifest.migrationId}.staging`,
   );
 
-  let finalExists = true;
+  let finalExists = false;
   try {
-    await sha256File(path.join(finalDir, ".avenlyo-migration-marker"));
-  } catch {
-    finalExists = false;
+    finalExists = (await stat(finalDir)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 
-  if (!finalExists) {
+  if (finalExists) {
+    const markerPath = path.join(finalDir, ".avenlyo-migration-marker");
+    let marker: string;
+    try {
+      marker = (await readFile(markerPath, "utf8")).trim();
+    } catch {
+      throw new Error(
+        `MIGRATION_OWNERSHIP_MISMATCH: ${finalDir} mevcut ancak migration marker yok.`,
+      );
+    }
+    if (marker !== manifest.migrationId) {
+      throw new Error(
+        `MIGRATION_OWNERSHIP_MISMATCH: target dosyalar başka bir migration'a ait (${marker}).`,
+      );
+    }
+  } else {
     await rm(stageDir, { recursive: true, force: true });
     await mkdir(stageDir, { recursive: true });
     await cp(uploadsSource, path.join(stageDir, "uploads"), { recursive: true });
     await mkdir(storageRoot, { recursive: true });
-    await import("node:fs/promises").then(({ writeFile }) =>
-      writeFile(path.join(stageDir, ".avenlyo-migration-marker"), manifest.migrationId, "utf8"),
+    await writeFile(
+      path.join(stageDir, ".avenlyo-migration-marker"),
+      manifest.migrationId,
+      "utf8",
     );
     await rename(stageDir, finalDir);
   }
@@ -564,19 +581,71 @@ export async function applyLegacyMigration(
   }
 }
 
-export async function rollbackLegacyMigration(manifestPath: string) {
+export async function rollbackLegacyMigration(
+  manifestPath: string,
+  confirmationMigrationId: string,
+) {
   const manifest = await readMigrationManifest(manifestPath);
+  if (confirmationMigrationId !== manifest.migrationId) {
+    throw new Error(
+      "Rollback reddedildi: --confirm-migration değeri manifest migrationId ile eşleşmiyor.",
+    );
+  }
+
   const importerUrl = process.env.DATABASE_IMPORTER_URL || process.env.DATABASE_ADMIN_URL;
   if (!importerUrl) throw new Error("DATABASE_ADMIN_URL tanımlı değil.");
 
+  const finalDir = path.resolve(
+    process.cwd(),
+    manifest.target.storageRoot,
+    manifest.target.workspaceId,
+  );
+  let finalDirExists = false;
+  try {
+    finalDirExists = (await stat(finalDir)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  if (finalDirExists) {
+    const marker = (
+      await readFile(path.join(finalDir, ".avenlyo-migration-marker"), "utf8")
+    ).trim();
+    if (marker !== manifest.migrationId) {
+      throw new Error(
+        "MIGRATION_OWNERSHIP_MISMATCH: rollback target dosyaları bu migration'a ait değil.",
+      );
+    }
+  }
+
   await withImporterTransaction(importerUrl, manifest.target.workspaceId, async (client) => {
-    await client.query("DELETE FROM app.workspaces WHERE id = $1", [
-      manifest.target.workspaceId,
-    ]);
+    const existing = await client.query<{
+      slug: string;
+      name: string;
+      created_at: Date;
+    }>(
+      "SELECT slug, name, created_at FROM app.workspaces WHERE id = $1",
+      [manifest.target.workspaceId],
+    );
+
+    if (existing.rowCount === 1) {
+      const row = existing.rows[0];
+      if (
+        row.slug !== manifest.target.workspaceSlug ||
+        row.name !== manifest.target.workspaceName ||
+        row.created_at.toISOString() !== manifest.createdAt
+      ) {
+        throw new Error(
+          "MIGRATION_OWNERSHIP_MISMATCH: target workspace manifest ile eşleşmiyor.",
+        );
+      }
+      await client.query("DELETE FROM app.workspaces WHERE id = $1", [
+        manifest.target.workspaceId,
+      ]);
+    }
   });
 
-  await rm(
-    path.resolve(process.cwd(), manifest.target.storageRoot, manifest.target.workspaceId),
-    { recursive: true, force: true },
-  );
+  if (finalDirExists) {
+    await rm(finalDir, { recursive: true, force: true });
+  }
 }
